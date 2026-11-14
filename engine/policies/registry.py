@@ -3,6 +3,8 @@ from .base import GlobalBestSellers, LastViewCategoryBestSellers
 from .cartfirst import CartFirstPolicy
 from .evidence import EvidencePolicy
 from .lgbm import LgbmPolicy
+from .money import MoneyPolicy
+from .skibidy import SkibidyPolicy
 
 FACTORIES = {
     "ref-global-bestsellers": GlobalBestSellers,
@@ -25,6 +27,13 @@ FACTORIES = {
     "cf-v1": lambda: CartFirstPolicy("cf-v1"),
     "cf-v1-cap3": lambda: CartFirstPolicy("cf-v1-cap3", cart_cap=3),
     "cf-v1-cap10": lambda: CartFirstPolicy("cf-v1-cap10", cart_cap=10),
+    # money: cart-first + expected-revenue re-rank (price^alpha, bounded); bought items hard-excluded
+    "money-v1": lambda: MoneyPolicy("money-v1", alpha=0.5),
+    "money-v1-a03": lambda: MoneyPolicy("money-v1-a03", alpha=0.3),
+    "money-v1-a08": lambda: MoneyPolicy("money-v1-a08", alpha=0.8),
+    # skibidy: standalone online learner (no LightGBM). Version string intentionally does not reveal the method.
+    "skibidy-v1": lambda: SkibidyPolicy("skibidy-v1"),
+    "skibidy-v1g": lambda: SkibidyPolicy("skibidy-v1g", explore_frac=0.0),
     "ev-v2-nocovis": lambda: EvidencePolicy("ev-v2-nocovis", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0),
 }
 
