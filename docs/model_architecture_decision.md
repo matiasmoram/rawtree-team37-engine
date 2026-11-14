@@ -52,6 +52,8 @@ Entrenar click y compra como objetivos separados y comparar `P(click) × P(compr
 
 El monitor de las 18:37 CET mostraba `lgbm-recent` 1,48 y `cf-rot` 1,56 compras esperadas por 100, pero con tamaños distintos (2.274 y 753) y ventanas móviles. El audit de 5 minutos encontró 56 % de requests con varios modelos; el de 15 minutos, 72 %. Esto impide afirmar que `cf-rot` sea mejor o que la asignación actual represente el tráfico que decide RawTree. Skibidy quedó claramente por debajo en la ventana larga, pero no basta para concluir sobre el modelo fuera de esa contaminación.
 
+El relevo local de las 18:42 falló en transporte: al pararlo a las 18:49 había 1.102 respuestas, 301 envíos, 107 fallos de push y 787 tardías, con timeouts de `api.rawtree.com`. El proceso local quedó detenido; `run_live.py` conserva 80/20 como mix de reanudación. No volver a exponer brazos hasta que se compruebe que el endpoint entrega envíos dentro del plazo.
+
 ## No hacer todavía
 
 - No desplegar un nuevo modelo solo porque mejore AUC: el ranker anterior mejoraba AUC pero no demostró mejor orden de compra.
