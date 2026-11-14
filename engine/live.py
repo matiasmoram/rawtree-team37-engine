@@ -11,13 +11,17 @@ Traffic is split between policies ("arms") by a stable hash of request_id, so ar
 from __future__ import annotations
 
 import hashlib
+import os
+import signal
 import logging
 import queue
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
+from .config import LOGS
 from .policies.base import K, fill
 from .policies.evidence import attach_sub_quality
 from .rt import RawTree
@@ -26,12 +30,15 @@ from .types import Request, parse_ts, sql_ts
 
 log = logging.getLogger("live")
 
-POLL_SLEEP = 0.15
-PUSH_EVERY = 0.15
-STOCK_EVERY = 2.0
+POLL_SLEEP = 0.2
+N_POLLERS = 2
+PUSH_EVERY = 0.1
+PUSH_WORKERS = 4
+STOCK_EVERY = 0.5
+UPDATE_OVERLAP = timedelta(seconds=30)
 FAST_EVERY = 60.0
 BUYS_EVERY = 20.0
-FULL_EVERY = 45 * 60.0
+FULL_EVERY = 60 * 60.0
 DEADLINE = 3.0
 
 POLL_SQL = """
@@ -71,6 +78,7 @@ class LiveRunner:
         self.latencies: deque = deque(maxlen=3000)
         self.lock = threading.Lock()
         self.clock_offset = 0.0  # server clock minus local clock, seconds (deadlines use the server clock)
+        self.seen_lock = threading.Lock()
 
     def measure_offset(self, rt: RawTree) -> None:
         samples = []
@@ -100,13 +108,17 @@ class LiveRunner:
         attach_sub_quality(snap)
         if self.snap is not None:
             snap.recent_user_buys = self.snap.recent_user_buys
-        # The snapshot already holds the catalogue as of snap.T; re-applying recent updates is idempotent.
-        self.last_update_ts = snap.T - timedelta(minutes=5)
+        # The snapshot holds the catalogue as of snap.T; replay updates since then before publishing it.
+        with self.lock:
+            self.last_update_ts = snap.T - timedelta(minutes=5)
+        self.apply_updates(rt, snap)
         self.snap = snap
         log.info("snapshot ready: %s users=%d products=%d", snap.build_secs, len(snap.user_buy), len(snap.products))
 
-    def apply_updates(self, rt: RawTree) -> None:
-        since = sql_ts(self.last_update_ts)
+    def apply_updates(self, rt: RawTree, snap: Snapshot | None = None) -> None:
+        snap = snap or self.snap
+        with self.lock:
+            since = sql_ts(self.last_update_ts - UPDATE_OVERLAP)
         rows = rt.query(
             "SELECT product_id::String AS pid, change::String AS change, ts::DateTime64(3) AS ts, category::String AS cat, "
             "subcategory::String AS sub, brand::String AS brand, price_eur::Float64 AS price, description::String AS descr, "
@@ -114,7 +126,6 @@ class LiveRunner:
         if not rows:
             return
         from .snapshot import Product
-        snap = self.snap
         products = snap.products
         if any(r["pid"] not in products for r in rows):
             products = dict(products)  # copy-on-add: policies may be iterating the old dict
@@ -129,31 +140,39 @@ class LiveRunner:
             if r["change"] == "price_change" and abs(float(r["price"]) - p.price) > 1e-9:
                 p.price_changed_ts = ts
             p.price, p.active = float(r["price"]), bool(r["active"])
-            self.last_update_ts = max(self.last_update_ts, ts - timedelta(seconds=1))
+            p.cat, p.sub, p.brand, p.descr = r["cat"], r["sub"], r["brand"], r["descr"]
+            with self.lock:
+                self.last_update_ts = max(self.last_update_ts, ts)
         snap.products = products
 
     # ---- threads ----------------------------------------------------------------------
-    def poller(self) -> None:
-        rt = RawTree(timeout=5)
+    def poller(self, offset: float = 0.0) -> None:
+        rt = RawTree(timeout=2.5)
+        self.stop.wait(offset)
         while not self.stop.is_set():
             try:
                 since = sql_ts(self.watermark - timedelta(seconds=8))
-                rows = rt.query(POLL_SQL.format(since=since), timeout=5, retries=0)
+                rows = rt.query(POLL_SQL.format(since=since), timeout=2.5, retries=0)
                 now = time.time()
-                fresh = []
                 for row in rows:
-                    rid = str(row["request_id"])
-                    if rid in self.seen:
+                    rid = str(row.get("request_id"))
+                    with self.seen_lock:
+                        if rid in self.seen:
+                            continue
+                        self.seen[rid] = now  # claim it: answer() cannot raise (valid_items is total)
+                    try:
+                        req = Request.from_row(row)
+                    except Exception as e:
+                        self.stats["errors"] += 1
+                        log.warning("unparseable request %s: %s", rid, str(e)[:200])
                         continue
-                    req = Request.from_row(row)
-                    self.seen[rid] = req.ts.timestamp()
-                    self.watermark = max(self.watermark, req.ts)
-                    fresh.append(req)
-                for req in fresh:
                     self.answer(req)
+                    if req.ts > self.watermark:
+                        self.watermark = req.ts
                 if len(self.seen) > 20000:
-                    cutoff = now - 600
-                    self.seen = {k: v for k, v in self.seen.items() if v > cutoff}
+                    with self.seen_lock:
+                        cutoff = now - 600
+                        self.seen = {k: v for k, v in self.seen.items() if v > cutoff}
             except Exception as e:
                 self.stats["errors"] += 1
                 log.warning("poll error: %s", str(e)[:200])
@@ -168,17 +187,61 @@ class LiveRunner:
             version = f"t37-{policy.name}"
         except Exception as e:
             log.exception("policy %s failed on %s: %s", policy.name, req.request_id, e)
-            items = fill(snap.pop_global, snap)
-            version = "t37-safety"
-        if len(items) != K or len(set(items)) != K:
-            items = fill(items, snap)
+            items, version = [], "t37-safety"
+        items = self.valid_items(items, snap)
         self.outbox.put((req, {"request_id": req.request_id, "items": items, "model_version": version}))
         self.stats["answered"] += 1
 
+    @staticmethod
+    def valid_items(items: list[str], snap: Snapshot) -> list[str]:
+        """Guarantee K distinct active ids using the current catalogue; never raises."""
+        try:
+            if len(items) == K and len(set(items)) == K and all(snap.is_valid(p) for p in items):
+                return items
+            out = fill(items, snap)
+            if len(out) == K:
+                return out
+        except Exception:
+            pass
+        out = []
+        for pid, p in list(snap.products.items()):
+            if p.active and pid not in out:
+                out.append(pid)
+                if len(out) == K:
+                    break
+        return out
+
+    def _send(self, batch: list) -> None:
+        rt = getattr(self._tls, "rt", None)
+        if rt is None:
+            rt = self._tls.rt = RawTree(timeout=2.0)
+        try:
+            if not self.dry_run:
+                rt.insert("submissions", [rec for _, rec in batch], database=self.team, timeout=2.0)
+            done = time.time() + self.clock_offset
+            for req, _ in batch:
+                self.latencies.append(done - req.ts.timestamp())
+            self.stats["pushed"] += len(batch)
+        except Exception as e:
+            self.stats["push_fail"] += 1
+            msg = str(e)
+            log.warning("push failed (%d rows): %s", len(batch), msg[:160])
+            if "insert HTTP 4" in msg:
+                for req, rec in batch:  # a bad row: send rows one by one once, drop the ones that still fail
+                    try:
+                        rt.insert("submissions", [rec], database=self.team, timeout=2.0)
+                        self.stats["pushed"] += 1
+                    except Exception as e2:
+                        log.warning("dropping %s: %s", rec["request_id"], str(e2)[:160])
+            else:
+                for item in batch:  # transport error: back to the outbox, the collector drops it once too late
+                    self.outbox.put(item)
+
     def pusher(self) -> None:
-        rt = RawTree(timeout=5)
-        pending: list = []
+        self._tls = threading.local()
+        pool = ThreadPoolExecutor(max_workers=PUSH_WORKERS, thread_name_prefix="push")
         while not self.stop.is_set():
+            pending = []
             while True:
                 try:
                     pending.append(self.outbox.get_nowait())
@@ -186,27 +249,13 @@ class LiveRunner:
                     break
             if pending:
                 now = time.time() + self.clock_offset
-                batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE + 2]
-                dropped = len(pending) - len(batch)
-                if dropped:
-                    self.stats["late"] += dropped
+                batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE + 1]
+                self.stats["late"] += len(pending) - len(batch)
                 if batch:
-                    try:
-                        if not self.dry_run:
-                            rt.insert("submissions", [rec for _, rec in batch], database=self.team, timeout=4)
-                        done = time.time() + self.clock_offset
-                        for req, _ in batch:
-                            self.latencies.append(done - req.ts.timestamp())
-                        self.stats["pushed"] += len(batch)
-                        pending = []
-                    except Exception as e:
-                        self.stats["push_fail"] += 1
-                        log.warning("push failed (%d pending): %s", len(batch), str(e)[:200])
-                        pending = batch
-                        time.sleep(0.1)
-                        continue
-                else:
-                    pending = []
+                    snap = self.snap
+                    for _, rec in batch:
+                        rec["items"] = self.valid_items(rec["items"], snap)
+                    pool.submit(self._send, batch)
             time.sleep(PUSH_EVERY)
 
     def stock(self) -> None:
@@ -216,7 +265,7 @@ class LiveRunner:
                 self.apply_updates(rt)
             except Exception as e:
                 log.warning("stock refresh failed: %s", str(e)[:200])
-            time.sleep(STOCK_EVERY)
+            self.stop.wait(STOCK_EVERY)
 
     def refresher(self) -> None:
         rt = RawTree(timeout=60)
@@ -261,12 +310,42 @@ class LiveRunner:
             log.info("answered=%(answered)d pushed=%(pushed)d push_fail=%(push_fail)d dropped_late=%(late)d errors=%(errors)d" % self.stats
                      + f" latency p50={p50:.2f}s p95={p95:.2f}s watermark={self.watermark:%H:%M:%S}")
 
+    def preload_seen(self, rt: RawTree) -> None:
+        rows = rt.query(f"SELECT request_id::String AS rid FROM {self.team}.submissions "
+                        "WHERE request_id::String IN (SELECT request_id::String FROM shop.requests "
+                        "WHERE ts::DateTime64(3) > now() - INTERVAL 3 MINUTE)", timeout=20)
+        now = time.time()
+        for r in rows:
+            self.seen[r["rid"]] = now
+        log.info("preloaded %d already-answered request ids", len(rows))
+
+    def takeover(self) -> None:
+        """Stop the previous live process (if any) only now that this one is ready: no gap, minimal overlap."""
+        pid_file = LOGS / "live.pid"
+        if pid_file.exists() and not self.dry_run:
+            try:
+                old = int(pid_file.read_text().strip())
+                if old != os.getpid():
+                    os.kill(old, signal.SIGTERM)
+                    log.info("took over from previous live process %d", old)
+            except (ValueError, OSError) as e:
+                log.info("no previous live process to stop (%s)", e)
+        if not self.dry_run:
+            pid_file.write_text(str(os.getpid()))
+
     def run(self) -> None:
         self.measure_offset(RawTree(timeout=10))
         self.build()
+        self.takeover()
         threads = [threading.Thread(target=t, name=t.__name__, daemon=True)
-                   for t in (self.poller, self.pusher, self.stock, self.refresher, self.rebuilder, self.reporter)]
+                   for t in (self.pusher, self.stock, self.refresher, self.rebuilder, self.reporter)]
+        threads += [threading.Thread(target=self.poller, args=(i * POLL_SLEEP / N_POLLERS,), name=f"poller{i}", daemon=True)
+                    for i in range(N_POLLERS)]
         self.watermark = datetime.now(timezone.utc) - timedelta(seconds=3)
+        try:
+            self.preload_seen(RawTree(timeout=20))
+        except Exception as e:
+            log.warning("could not preload answered ids: %s", str(e)[:200])
         for t in threads:
             t.start()
         log.info("live runner started (dry_run=%s) arms=%s", self.dry_run, [(p.name, s) for p, s in self.arms])

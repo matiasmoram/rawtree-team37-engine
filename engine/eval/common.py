@@ -136,6 +136,7 @@ class EvalSet:
     cases: list[Case]
     info: dict[str, Any] = field(default_factory=dict)
     complete: bool = True
+    new_products: set[str] = field(default_factory=set)  # for the cold_item segment only
 
 
 @dataclass
