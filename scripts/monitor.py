@@ -21,8 +21,9 @@ sys.path.insert(0, str(ROOT))
 from engine.config import LOGS, TEAM  # noqa: E402  (loads .env, creates logs/)
 from engine.rt import RawTree  # noqa: E402
 
-STATE_URL = "https://datathon.rawtree.dev/api/state"
+STATE_URL = "https://datathon.rawtree.dev/api/state?by=model"
 LEADERBOARD_CSV = LOGS / "leaderboard.csv"
+LEADERBOARD_MODELS_CSV = LOGS / "leaderboard_models.csv"
 FEEDBACK_CSV = LOGS / "feedback.csv"
 Z95 = 1.959963984540054
 
@@ -40,6 +41,13 @@ FEEDBACK_FIELDS = [
     "requests", "served_team", "late", "invalid", "missing", "clicks", "purchases", "revenue",
     "p50_ms", "p95_ms", "conv_per100", "conv_lo", "conv_hi", "ctr_per100",
     "revenue_per_request", "on_time_share",
+]
+
+MODEL_FIELDS = [
+    "fetched_at", "updated_at", "window_start", "window_end", "model_version",
+    "requests", "conversion", "cold_requests", "cold_conversion", "revenue_per_request",
+    "baseline_conversion", "reference_conversion",
+    "lift_vs_baseline_pct", "normalized_score_vs_reference",
 ]
 
 FEEDBACK_SQL = """
@@ -180,7 +188,7 @@ def build_feedback_row(r: dict, fetched_at: str, minutes: int) -> dict:
     }
 
 
-def print_leaderboard(row: dict, appended: bool) -> None:
+def print_leaderboard(row: dict, appended: bool, top5: str) -> None:
     now = datetime.now().strftime("%H:%M:%S")
     print(
         f"[{now}] LEADERBOARD mode={fmt(row['mode'])} updated={fmt(row['updated_at'])} "
@@ -190,8 +198,83 @@ def print_leaderboard(row: dict, appended: bool) -> None:
         f"| rank {fmt(row['rank'])}/{fmt(row['n_teams'])} "
         f"| on_time={fmt(row['on_time'], 4)} "
         f"| progress={fmt(row['progress_latest'], 4)} "
+        f"| top5 best: {top5} "
         f"| {'appended' if appended else 'unchanged, not logged'}"
     )
+
+
+def _pct_lift(conv: float | None, base: float | None) -> float | None:
+    if conv is None or not base:
+        return None
+    return 100 * (conv / base - 1)
+
+
+def _norm_vs_reference(conv: float | None, base: float | None, ref: float | None) -> float | None:
+    if conv is None or base is None or ref is None or ref == base:
+        return None
+    return 100 * (conv - base) / (ref - base)
+
+
+def build_model_rows(state: dict, fetched_at: str) -> list[dict]:
+    window = state.get("window") or [None, None]
+    base_conv = (state.get("baseline") or {}).get("conversion")
+    ref_conv = (state.get("reference") or {}).get("conversion")
+    ours = next((t for t in state.get("teams") or [] if str(t.get("team_id")) == TEAM), {})
+    rows = []
+    for v in ours.get("versions") or []:
+        conv = v.get("conversion")
+        rows.append({
+            "fetched_at": fetched_at,
+            "updated_at": state.get("updated_at"),
+            "window_start": window[0],
+            "window_end": window[1],
+            "model_version": v.get("model_version"),
+            "requests": v.get("requests"),
+            "conversion": conv,
+            "cold_requests": v.get("cold_requests"),
+            "cold_conversion": v.get("cold_conversion"),
+            "revenue_per_request": v.get("revenue_per_request"),
+            "baseline_conversion": base_conv,
+            "reference_conversion": ref_conv,
+            "lift_vs_baseline_pct": _pct_lift(conv, base_conv),
+            "normalized_score_vs_reference": _norm_vs_reference(conv, base_conv, ref_conv),
+        })
+    return rows
+
+
+def best_conversion(team: dict) -> tuple[str | None, float | None]:
+    """Team's `best` is a model_version string; its conversion comes from the matching version entry."""
+    best = team.get("best")
+    if isinstance(best, dict):
+        return best.get("model_version"), best.get("conversion")
+    match = next((v for v in team.get("versions") or [] if v.get("model_version") == best), None)
+    return best, (match or {}).get("conversion")
+
+
+def top5_summary(state: dict) -> str:
+    entries = []
+    for t in state.get("teams") or []:
+        mv, conv = best_conversion(t)
+        if conv is not None:
+            entries.append((float(conv), str(t.get("team_id")), mv))
+    entries.sort(reverse=True)
+    if not entries:
+        return "-"
+    return " ".join(f"{tid}:{mv}:{fmt(conv, 4)}" for conv, tid, mv in entries[:5])
+
+
+def print_models(rows: list[dict]) -> None:
+    if not rows:
+        print("  (no per-model versions for our team)")
+        return
+    ordered = sorted(rows, key=lambda r: r["conversion"] if r["conversion"] is not None else float("-inf"), reverse=True)
+    for r in ordered:
+        print(
+            f"  ver={r['model_version']} req={r['requests']} conv={fmt(r['conversion'], 4)} "
+            f"cold_req={r['cold_requests']} cold_conv={fmt(r['cold_conversion'], 4)} "
+            f"rev/req={fmt(r['revenue_per_request'], 4)} lift_vs_base%={fmt(r['lift_vs_baseline_pct'], 1)} "
+            f"norm_vs_ref={fmt(r['normalized_score_vs_reference'], 1)}"
+        )
 
 
 def print_feedback(rows: list[dict]) -> None:
@@ -209,17 +292,28 @@ def print_feedback(rows: list[dict]) -> None:
         )
 
 
-def run_leaderboard(fetched_at: str) -> None:
+def run_leaderboard(state: dict, fetched_at: str) -> None:
     try:
-        state = fetch_state()
         row = build_leaderboard_row(state, fetched_at)
         last = last_logged_updated_at(LEADERBOARD_CSV)
         appended = str(row["updated_at"]) != str(last)
         if appended:
             append_rows(LEADERBOARD_CSV, LEADERBOARD_FIELDS, [row])
-        print_leaderboard(row, appended)
+        print_leaderboard(row, appended, top5_summary(state))
     except Exception as e:  # keep the loop alive
         print(f"[leaderboard] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def run_models(state: dict, fetched_at: str) -> None:
+    try:
+        rows = build_model_rows(state, fetched_at)
+        last = last_logged_updated_at(LEADERBOARD_MODELS_CSV)
+        appended = bool(rows) and str(state.get("updated_at")) != str(last)
+        if appended:
+            append_rows(LEADERBOARD_MODELS_CSV, MODEL_FIELDS, rows)
+        print_models(rows)
+    except Exception as e:  # keep the loop alive
+        print(f"[models] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def run_feedback(client: RawTree, fetched_at: str, minutes: int) -> None:
@@ -234,7 +328,13 @@ def run_feedback(client: RawTree, fetched_at: str, minutes: int) -> None:
 
 def iteration(client: RawTree, minutes: int) -> None:
     fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    run_leaderboard(fetched_at)
+    try:
+        state = fetch_state()
+    except Exception as e:  # keep the loop alive
+        print(f"[state] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+    else:
+        run_leaderboard(state, fetched_at)
+        run_models(state, fetched_at)
     run_feedback(client, fetched_at, minutes)
 
 

@@ -275,3 +275,72 @@ def refresh_fast(rt: RawTree, snap: Snapshot, now: datetime | None = None) -> No
     snap.stats = load_stats(rt, now)
     snap.T = now
     _rank_lists(snap)
+
+
+DELTA_WEIGHTS = {"purchase": 5.0, "add_to_cart": 3.0, "view": 1.0}
+
+
+def apply_delta(rt: RawTree, snap: Snapshot, until: datetime | None = None) -> int:
+    """Bring a snapshot forward to `until` using only live events since snap.T (small download).
+
+    User tables are updated copy-on-write per user (a new dict is assigned), so a policy reading a
+    user's dict in another thread never sees it change size mid-iteration. Co-visitation is kept as is.
+    Returns the number of (user, product, event type) rows applied.
+    """
+    until = (until or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    rows = rt.query(f"""
+        SELECT user_id::String AS u, product_id::String AS p, event_type::String AS et, count() AS n, max(ts::DateTime64(3)) AS last
+        FROM shop.events WHERE ts::DateTime64(3) >= '{sql_ts(snap.T)}' AND ts::DateTime64(3) < '{sql_ts(until)}'
+        GROUP BY u, p, et SETTINGS max_execution_time = 120""", timeout=150)
+    products = load_products(rt, until)
+    by_user: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_user[r["u"]].append(r)
+    for u, items in by_user.items():
+        ubuy = dict(snap.user_buy.get(u, {}))
+        uview = dict(snap.user_view.get(u, {}))
+        usub = dict(snap.user_sub.get(u, {}))
+        ucat = dict(snap.user_cat.get(u, {}))
+        for r in items:
+            n, last, pid = int(r["n"]), parse_ts(r["last"]), r["p"]
+            if r["et"] == "purchase":
+                old = ubuy.get(pid, (0, last))
+                ubuy[pid] = (old[0] + n, max(old[1], last))
+            else:
+                old = uview.get(pid, (0, last))
+                uview[pid] = (old[0] + n, max(old[1], last))
+            p = products.get(pid)
+            if p is not None:
+                w = DELTA_WEIGHTS.get(r["et"], 1.0) * n
+                usub[p.sub] = usub.get(p.sub, 0.0) + w
+                ucat[p.cat] = ucat.get(p.cat, 0.0) + w
+        if ubuy:
+            snap.user_buy[u] = ubuy
+        if uview:
+            snap.user_view[u] = uview
+        snap.user_sub[u] = usub
+        snap.user_cat[u] = ucat
+    snap.products = products
+    snap.stats = load_stats(rt, until)
+    snap.T = until
+    _rank_lists(snap)
+    return len(rows)
+
+
+def latest_cached(max_age_hours: float = 12.0) -> Snapshot | None:
+    """Most recent pickled live snapshot (cache/live_snapshot.pkl) if not too old."""
+    path = CACHE / "live_snapshot.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as f:
+        snap = pickle.load(f)
+    if (datetime.now(timezone.utc) - snap.T).total_seconds() > max_age_hours * 3600:
+        return None
+    return snap
+
+
+def save_live(snap: Snapshot) -> None:
+    tmp = CACHE / "live_snapshot.pkl.tmp"
+    with tmp.open("wb") as f:
+        pickle.dump(snap, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.replace(CACHE / "live_snapshot.pkl")

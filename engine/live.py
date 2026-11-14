@@ -25,7 +25,8 @@ from .config import LOGS
 from .policies.base import K, fill
 from .policies.evidence import attach_sub_quality
 from .rt import RawTree
-from .snapshot import Snapshot, build_snapshot, load_products, load_stats, _rank_lists
+from .snapshot import Snapshot, apply_delta, build_snapshot, latest_cached, load_products, load_stats, save_live, _rank_lists
+from .policies.prepare import prepare_snapshot
 from .types import Request, parse_ts, sql_ts
 
 log = logging.getLogger("live")
@@ -38,7 +39,7 @@ STOCK_EVERY = 0.5
 UPDATE_OVERLAP = timedelta(seconds=30)
 FAST_EVERY = 60.0
 BUYS_EVERY = 20.0
-FULL_EVERY = 60 * 60.0
+DELTA_EVERY = 10 * 60.0   # incremental user/catalogue update from live events (small download)
 DEADLINE = 3.0
 
 POLL_SQL = """
@@ -77,16 +78,23 @@ class LiveRunner:
         self.stats = {"answered": 0, "pushed": 0, "push_fail": 0, "late": 0, "errors": 0}
         self.latencies: deque = deque(maxlen=3000)
         self.lock = threading.Lock()
-        self.clock_offset = 0.0  # server clock minus local clock, seconds (deadlines use the server clock)
+        self.clock_offset = 0.93  # server clock minus local clock (measured ~+0.93s at 14:48); refreshed, seconds (deadlines use the server clock)
         self.seen_lock = threading.Lock()
 
     def measure_offset(self, rt: RawTree) -> None:
+        """Server-minus-local clock offset from the fastest round trips. Never raises: keeps the last value."""
         samples = []
-        for _ in range(5):
-            t0 = time.time()
-            row = rt.query("SELECT toString(now64(3)) AS n", timeout=5, retries=0)[0]
-            t1 = time.time()
-            samples.append((t1 - t0, parse_ts(row["n"]).timestamp() - (t0 + t1) / 2))
+        for _ in range(7):
+            try:
+                t0 = time.time()
+                row = rt.query("SELECT toString(now64(3)) AS n", timeout=6, retries=1)[0]
+                t1 = time.time()
+                samples.append((t1 - t0, parse_ts(row["n"]).timestamp() - (t0 + t1) / 2))
+            except Exception as e:
+                log.warning("offset sample failed: %s", str(e)[:120])
+        if len(samples) < 3:
+            log.warning("clock offset not measured, keeping %+.3fs", self.clock_offset)
+            return
         samples.sort()
         self.clock_offset = sorted(off for _, off in samples[:3])[1]  # median of the 3 fastest round trips
         log.info("clock offset server-local = %+.3fs", self.clock_offset)
@@ -103,9 +111,17 @@ class LiveRunner:
 
     # ---- knowledge ------------------------------------------------------------------
     def build(self) -> None:
+        """Start from the persisted snapshot plus a live delta; full download only if there is none."""
         rt = RawTree(timeout=300)
-        snap = build_snapshot(rt)
+        snap = latest_cached()
+        if snap is not None:
+            n = apply_delta(rt, snap)
+            log.info("loaded cached snapshot and applied %d delta rows", n)
+        else:
+            snap = build_snapshot(rt)
+            save_live(snap)
         attach_sub_quality(snap)
+        prepare_snapshot(snap)
         if self.snap is not None:
             snap.recent_user_buys = self.snap.recent_user_buys
         # The snapshot holds the catalogue as of snap.T; replay updates since then before publishing it.
@@ -288,11 +304,18 @@ class LiveRunner:
             self.stop.wait(BUYS_EVERY)
 
     def rebuilder(self) -> None:
-        while not self.stop.wait(FULL_EVERY):
+        """Every DELTA_EVERY: fold the new live events into the snapshot (copy-on-write per user)."""
+        rt = RawTree(timeout=150)
+        while not self.stop.wait(DELTA_EVERY):
             try:
-                self.build()
+                t0 = time.time()
+                n = apply_delta(rt, self.snap)
+                attach_sub_quality(self.snap)
+                prepare_snapshot(self.snap)
+                log.info("delta applied: %d rows in %.1fs", n, time.time() - t0)
+                # persisting is done by scripts/refresh_cache.py in its own process (pickling 150 MB holds the GIL ~20 s)
             except Exception as e:
-                log.warning("full rebuild failed, keeping old snapshot: %s", str(e)[:200])
+                log.warning("delta update failed, keeping snapshot: %s", str(e)[:200])
 
     def reporter(self) -> None:
         rt = RawTree(timeout=10)
