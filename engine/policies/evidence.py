@@ -14,7 +14,9 @@ user affinity, trend and price fit. Every multiplier is bounded so no single sig
 """
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -39,7 +41,7 @@ ORGANIC_MEAN = 548160 / 10354047        # organic purchases per view
 class EvidencePolicy:
     def __init__(self, name: str = "ev-v1", recent_buy_factor: float = 0.25, covis_gain: float = 3.0,
                  affinity_gain: float = 1.5, max_views_used: int = 6, rel: dict[str, float] | None = None,
-                 bought_factor: float | None = None) -> None:
+                 bought_factor: float | None = None, content_neighbors: bool = False) -> None:
         """`rel` overrides relation rates; `bought_factor` (if set) multiplies any item the user bought before,
         instead of treating "bought before" as a positive relation (live feedback: bought items lose appeal)."""
         self.name = name
@@ -51,6 +53,26 @@ class EvidencePolicy:
         self.covis_gain = covis_gain
         self.affinity_gain = affinity_gain
         self.max_views_used = max_views_used
+        self.semantic: dict[str, list[tuple[str, float]]] = {}
+        self.reverse_semantic: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        if content_neighbors:
+            path = Path(__file__).resolve().parents[2] / "cache" / "new_product_neighbors.json"
+            if path.exists():
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    for cold_pid, pairs in raw.items():
+                        validated = []
+                        for warm_pid, sim in pairs[:20]:
+                            sim = float(sim)
+                            if 0.65 <= sim <= 1.0 and cold_pid != warm_pid:
+                                validated.append((warm_pid, sim))
+                                self.reverse_semantic[warm_pid].append((cold_pid, sim))
+                        if validated:
+                            self.semantic[cold_pid] = validated
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    raise RuntimeError(f"Invalid cold-start neighbor cache: {path}") from exc
+            else:
+                raise FileNotFoundError(f"Cold-start neighbor cache missing: {path}")
 
     # ---- item quality ---------------------------------------------------------------
     def quality(self, pid: str, snap: Snapshot, sub_quality: dict[str, float]) -> float:
@@ -85,6 +107,22 @@ class EvidencePolicy:
 
         # ---- candidates ----
         cand: set[str] = set(viewed)
+        semantic_boost: dict[str, float] = defaultdict(float)
+        # New products can borrow neighbours' priors; old products can introduce
+        # semantically matched new products. Both are candidate-only signals until
+        # a bounded score boost is applied after the normal behavioural evidence.
+        for view_pid in viewed[:4]:
+            vp = products[view_pid]
+            for target_pid, sim in self.semantic.get(view_pid, [])[:10]:
+                tp = products.get(target_pid)
+                if tp and tp.active and tp.sub == vp.sub:
+                    cand.add(target_pid)
+                    semantic_boost[target_pid] = max(semantic_boost[target_pid], sim)
+            for target_pid, sim in self.reverse_semantic.get(view_pid, [])[:10]:
+                tp = products.get(target_pid)
+                if tp and tp.active and tp.sub == vp.sub:
+                    cand.add(target_pid)
+                    semantic_boost[target_pid] = max(semantic_boost[target_pid], sim)
         covis: dict[str, float] = defaultdict(float)
         for k, pid in enumerate(viewed[:4]):
             decay = 0.7 ** k
@@ -150,6 +188,8 @@ class EvidencePolicy:
             score *= min(2.0, max(0.7, snap.trend_lift(pid))) ** 0.5
             if user_price and p.price > 0:
                 score *= math.exp(-0.25 * abs(math.log(p.price / user_price)))
+            if semantic_boost.get(pid, 0.0) and not bought and pid not in recent_buys:
+                score *= 1.0 + 0.35 * semantic_boost[pid]
             if pid in recent_buys:
                 score *= self.recent_buy_factor
             scored.append((score, pid))
