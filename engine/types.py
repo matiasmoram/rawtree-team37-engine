@@ -10,14 +10,11 @@ TS_FMT = "%Y-%m-%d %H:%M:%S.%f"
 def parse_ts(value: str | datetime) -> datetime:
     """RawTree returns 'YYYY-MM-DD HH:MM:SS.fffffffff' (UTC, up to 9 decimals) or ISO strings."""
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    s = str(value).replace("T", " ").rstrip("Z")
-    if "." in s:
-        head, frac = s.split(".", 1)
-        s = f"{head}.{frac[:6]}"
-    else:
-        s = f"{s}.000000"
-    return datetime.strptime(s, TS_FMT).replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    # fromisoformat accepts ClickHouse's nanoseconds (truncated to microseconds),
+    # UTC Z and explicit offsets, including whole seconds without a fraction.
+    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def sql_ts(dt: datetime) -> str:

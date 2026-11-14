@@ -5,12 +5,13 @@ Threads:
   pusher     inserts answers in batches every PUSH_EVERY seconds, retries until the deadline
   stock      applies new catalogue updates (stock-outs, prices, new products) every STOCK_EVERY seconds
   refresher  refreshes item counters and recent user purchases every FAST_EVERY seconds
-  rebuilder  rebuilds the full snapshot (co-visitation, user profiles incl. live events) every FULL_EVERY seconds
+  rebuilder  folds user/catalog deltas into the snapshot; optional signals refresh separately
 Traffic is split between policies ("arms") by a stable hash of request_id, so arms can be compared on feedback.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import signal
 import logging
@@ -25,9 +26,11 @@ from .config import LOGS
 from .policies.base import K, fill
 from .policies.evidence import attach_sub_quality
 from .rt import RawTree
+from .cartstate import attach_user_carts, refresh_user_carts
 from .snapshot import Snapshot, apply_delta, build_snapshot, latest_cached, load_products, load_stats, save_live, _rank_lists
 from .policies.prepare import prepare_snapshot
 from .types import Request, parse_ts, sql_ts
+from .experiments import owns_request, health_snapshot, write_health
 
 log = logging.getLogger("live")
 
@@ -64,11 +67,21 @@ def arm_bucket(request_id: str) -> int:
 
 
 class LiveRunner:
-    def __init__(self, arms: list[tuple[object, int]], team: str, dry_run: bool = False) -> None:
+    def __init__(self, arms: list[tuple[object, int]], team: str, dry_run: bool = False,
+                 shard_index: int = 0, shard_count: int = 1,
+                 experiment_until: float | None = None, after_arms=None) -> None:
         assert sum(share for _, share in arms) == 100, "arm shares must add up to 100"
         self.arms = arms
         self.team = team
         self.dry_run = dry_run
+        owns_request("validate", shard_index, shard_count)
+        self.shard_index, self.shard_count = shard_index, shard_count
+        self.last_success_at = None
+        self.metadata_queue = queue.Queue(maxsize=2000)
+        self.experiment_until = experiment_until
+        self.after_arms = after_arms
+        if experiment_until is not None and (not after_arms or sum(w for _, w in after_arms) != 100):
+            raise ValueError("a timed experiment requires fallback arms summing to 100")
         self.snap: Snapshot | None = None
         self.outbox: queue.Queue = queue.Queue()
         self.seen: dict[str, float] = {}
@@ -80,6 +93,7 @@ class LiveRunner:
         self.lock = threading.Lock()
         self.clock_offset = 0.93  # server clock minus local clock (measured ~+0.93s at 14:48); refreshed, seconds (deadlines use the server clock)
         self.seen_lock = threading.Lock()
+        self.cart_since: datetime | None = None
 
     def measure_offset(self, rt: RawTree) -> None:
         """Server-minus-local clock offset from the fastest round trips. Never raises: keeps the last value."""
@@ -101,6 +115,12 @@ class LiveRunner:
 
     # ---- arms -----------------------------------------------------------------------
     def pick(self, request_id: str):
+        if self.experiment_until is not None and time.time() + self.clock_offset >= self.experiment_until:
+            with self.lock:
+                if self.experiment_until is not None:
+                    self.arms = self.after_arms
+                    self.experiment_until = None
+                    log.info("fixed experiment ended; restored arms=%s", [(p.name, w) for p, w in self.arms])
         b = arm_bucket(request_id)
         acc = 0
         for policy, share in self.arms:
@@ -122,8 +142,17 @@ class LiveRunner:
             save_live(snap)
         attach_sub_quality(snap)
         prepare_snapshot(snap)
+        try:
+            # Cart state is a high-value signal and deliberately separate from user_view.
+            attach_user_carts(rt, snap)
+        except Exception as e:
+            log.warning("user_cart unavailable; cart-first policy will use its non-cart signals: %s", str(e)[:200])
+            snap.user_cart = {}
+        self.cart_since = snap.T - timedelta(seconds=30)
         if self.snap is not None:
             snap.recent_user_buys = self.snap.recent_user_buys
+            if not snap.user_cart:
+                snap.user_cart = getattr(self.snap, "user_cart", {})
         # The snapshot holds the catalogue as of snap.T; replay updates since then before publishing it.
         with self.lock:
             self.last_update_ts = snap.T - timedelta(minutes=5)
@@ -172,6 +201,8 @@ class LiveRunner:
                 now = time.time()
                 for row in rows:
                     rid = str(row.get("request_id"))
+                    if not owns_request(rid, self.shard_index, self.shard_count):
+                        continue
                     with self.seen_lock:
                         if rid in self.seen:
                             continue
@@ -198,15 +229,69 @@ class LiveRunner:
     def answer(self, req: Request) -> None:
         snap = self.snap
         policy = self.pick(req.request_id)
+        metadata = {}
         try:
-            items = policy.recommend(req, snap)
+            if hasattr(policy, "recommend_with_metadata"):
+                items, metadata = policy.recommend_with_metadata(req, snap)
+            else:
+                items = policy.recommend(req, snap)
             version = f"t37-{policy.name}"
         except Exception as e:
             log.exception("policy %s failed on %s: %s", policy.name, req.request_id, e)
             items, version = [], "t37-safety"
+        before_validation = list(items)
         items = self.valid_items(items, snap)
+        underlying = getattr(policy, "base", policy)
+        if version != "t37-safety" and hasattr(underlying, "exposure_metadata"):
+            try:
+                metadata.update(underlying.exposure_metadata(req, snap, items))
+            except Exception as e:
+                log.warning("exposure metadata unavailable: %s", str(e)[:120])
+        if metadata and not self.dry_run:
+            metadata["propensity_valid"] = before_validation == items
+            record = {"request_id": req.request_id, "ts": req.ts.isoformat(), "items": items,
+                      "model_version": version, "metadata": metadata, "proposal_only": True}
+            try:
+                self.metadata_queue.put_nowait(record)
+            except queue.Full:
+                log.warning("exposure metadata queue full; dropping metadata, preserving response")
         self.outbox.put((req, {"request_id": req.request_id, "items": items, "model_version": version}))
         self.stats["answered"] += 1
+
+    def metadata_writer(self):
+        """Only proposals; evaluators must match exact lists to actual feedback."""
+        if self.dry_run:
+            return
+        with (LOGS / "exposure_metadata.jsonl").open("a", encoding="utf-8", buffering=1) as f:
+            while not self.stop.is_set():
+                try:
+                    record = self.metadata_queue.get(timeout=1)
+                    f.write(json.dumps(record, allow_nan=False) + "\n")
+                except queue.Empty:
+                    continue
+                except (OSError, ValueError):
+                    log.exception("exposure metadata write failed")
+
+    def refresh_policy_signals(self):
+        """Read small immutable artifacts off the request path; no HTTP model calls."""
+        from .content import ContentIndex
+        from .recent_covis import RecentCovisIndex
+        while not self.stop.wait(60):
+            for policy, _ in self.arms:
+                policy = getattr(policy, "base", policy)
+                try:
+                    if hasattr(policy, "refresh_feedback"):
+                        policy.refresh_feedback()
+                    if hasattr(policy, "refresh_content"):
+                        policy.refresh_content()
+                    elif getattr(policy, "use_content", False):
+                        policy.content_index = ContentIndex.load()
+                    if policy.__class__.__name__ == "ContentPolicy":
+                        policy.index = ContentIndex.load()
+                    if policy.__class__.__name__ == "RecentCovisPolicy":
+                        policy.index = RecentCovisIndex.load()
+                except Exception as e:
+                    log.warning("policy artifact refresh failed; retaining state: %s", str(e)[:120])
 
     @staticmethod
     def valid_items(items: list[str], snap: Snapshot) -> list[str]:
@@ -228,25 +313,45 @@ class LiveRunner:
         return out
 
     def _send(self, batch: list) -> None:
+        if not self.dry_run:
+            now = time.time() + self.clock_offset
+            current = [(req, rec) for req, rec in batch if now - req.ts.timestamp() < DEADLINE - 0.2]
+            self.stats["late"] += len(batch) - len(current)
+            batch = current
+            if not batch:
+                return
+            for _, rec in batch:
+                rec["items"] = self.valid_items(rec["items"], self.snap)
         rt = getattr(self._tls, "rt", None)
         if rt is None:
             rt = self._tls.rt = RawTree(timeout=2.0)
         try:
             if not self.dry_run:
-                rt.insert("submissions", [rec for _, rec in batch], database=self.team, timeout=2.0)
+                remaining = min(DEADLINE - (time.time() + self.clock_offset - req.ts.timestamp()) for req, _ in batch)
+                rt.insert("submissions", [rec for _, rec in batch], database=self.team,
+                          timeout=max(0.1, min(2.0, remaining - 0.1)))
             done = time.time() + self.clock_offset
             for req, _ in batch:
                 self.latencies.append(done - req.ts.timestamp())
             self.stats["pushed"] += len(batch)
+            if not self.dry_run:
+                self.last_success_at = time.time()
         except Exception as e:
             self.stats["push_fail"] += 1
             msg = str(e)
             log.warning("push failed (%d rows): %s", len(batch), msg[:160])
             if "insert HTTP 4" in msg:
                 for req, rec in batch:  # a bad row: send rows one by one once, drop the ones that still fail
+                    remaining = DEADLINE - (time.time() + self.clock_offset - req.ts.timestamp())
+                    if remaining <= 0.2:
+                        self.stats["late"] += 1
+                        continue
                     try:
-                        rt.insert("submissions", [rec], database=self.team, timeout=2.0)
+                        rec["items"] = self.valid_items(rec["items"], self.snap)
+                        rt.insert("submissions", [rec], database=self.team, timeout=min(2.0, remaining - 0.1))
                         self.stats["pushed"] += 1
+                        self.last_success_at = time.time()
+                        self.latencies.append(time.time() + self.clock_offset - req.ts.timestamp())
                     except Exception as e2:
                         log.warning("dropping %s: %s", rec["request_id"], str(e2)[:160])
             else:
@@ -265,7 +370,7 @@ class LiveRunner:
                     break
             if pending:
                 now = time.time() + self.clock_offset
-                batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE + 1]
+                batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE - 0.2]
                 self.stats["late"] += len(pending) - len(batch)
                 if batch:
                     snap = self.snap
@@ -282,6 +387,16 @@ class LiveRunner:
             except Exception as e:
                 log.warning("stock refresh failed: %s", str(e)[:200])
             self.stop.wait(STOCK_EVERY)
+
+    def carts(self) -> None:
+        """Incrementally add recent carts and remove products purchased since the snapshot."""
+        rt = RawTree(timeout=10)
+        while not self.stop.is_set():
+            try:
+                self.cart_since = refresh_user_carts(rt, self.snap, self.cart_since)
+            except Exception as e:
+                log.warning("cart refresh failed: %s", str(e)[:200])
+            self.stop.wait(1.5)
 
     def refresher(self) -> None:
         rt = RawTree(timeout=60)
@@ -332,6 +447,14 @@ class LiveRunner:
             p95 = lat[int(len(lat) * 0.95)] if lat else 0
             log.info("answered=%(answered)d pushed=%(pushed)d push_fail=%(push_fail)d dropped_late=%(late)d errors=%(errors)d" % self.stats
                      + f" latency p50={p50:.2f}s p95={p95:.2f}s watermark={self.watermark:%H:%M:%S}")
+            if not self.dry_run:
+                try:
+                    suffix = "" if self.shard_count == 1 else f"_{self.shard_index}_of_{self.shard_count}"
+                    write_health(LOGS / f"runner_health{suffix}.json", health_snapshot(
+                        self.stats, shard_index=self.shard_index, shard_count=self.shard_count,
+                        arms=[(p.name, s) for p, s in self.arms], last_success_at=self.last_success_at))
+                except OSError as e:
+                    log.warning("health write failed: %s", str(e)[:120])
 
     def preload_seen(self, rt: RawTree) -> None:
         rows = rt.query(f"SELECT request_id::String AS rid FROM {self.team}.submissions "
@@ -344,7 +467,8 @@ class LiveRunner:
 
     def takeover(self) -> None:
         """Stop the previous live process (if any) only now that this one is ready: no gap, minimal overlap."""
-        pid_file = LOGS / "live.pid"
+        suffix = "" if self.shard_count == 1 else f"_{self.shard_index}_of_{self.shard_count}"
+        pid_file = LOGS / f"live{suffix}.pid"
         if pid_file.exists() and not self.dry_run:
             try:
                 old = int(pid_file.read_text().strip())
@@ -361,7 +485,8 @@ class LiveRunner:
         self.build()
         self.takeover()
         threads = [threading.Thread(target=t, name=t.__name__, daemon=True)
-                   for t in (self.pusher, self.stock, self.refresher, self.rebuilder, self.reporter)]
+                   for t in (self.pusher, self.stock, self.carts, self.refresher, self.rebuilder, self.reporter,
+                             self.metadata_writer, self.refresh_policy_signals)]
         threads += [threading.Thread(target=self.poller, args=(i * POLL_SLEEP / N_POLLERS,), name=f"poller{i}", daemon=True)
                     for i in range(N_POLLERS)]
         self.watermark = datetime.now(timezone.utc) - timedelta(seconds=3)

@@ -67,7 +67,14 @@ class EvidencePolicy:
         return min(3.0, max(0.4, q))
 
     # ---- main entry -----------------------------------------------------------------
-    def recommend(self, req: Request, snap: Snapshot) -> list[str]:
+    def extra_candidates(self, req: Request, snap: Snapshot):
+        """Extension point for isolated experiments; existing policies add nothing."""
+        return ()
+
+    def item_multiplier(self, req: Request, snap: Snapshot, pid: str) -> float:
+        return 1.0
+
+    def scored_candidates(self, req: Request, snap: Snapshot) -> list[tuple[float, str]]:
         products = snap.products
         viewed = [p for p in req.viewed if p in products][: self.max_views_used]
         user = req.user_id
@@ -113,6 +120,7 @@ class EvidencePolicy:
             if p.is_new and p.active and p.sub in sess_subs:
                 cand.add(pid)
 
+        cand.update(self.extra_candidates(req, snap))
         usub_total = sum(usub.values()) or 1.0
         user_price = snap.user_price.get(user)
         sub_quality = getattr(snap, "sub_quality", {})
@@ -152,8 +160,13 @@ class EvidencePolicy:
                 score *= math.exp(-0.25 * abs(math.log(p.price / user_price)))
             if pid in recent_buys:
                 score *= self.recent_buy_factor
+            score *= self.item_multiplier(req, snap, pid)
             scored.append((score, pid))
 
+        return scored
+
+    def recommend(self, req: Request, snap: Snapshot) -> list[str]:
+        scored = self.scored_candidates(req, snap)
         scored.sort(reverse=True)
         return fill([pid for _, pid in scored[: K * 3]], snap)
 

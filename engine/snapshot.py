@@ -261,6 +261,7 @@ def build_snapshot(rt: RawTree, T: datetime | None = None, cache: bool = False) 
     user_buy, user_view, user_sub, user_cat, user_price = timed("users", load_users, rt, T)
     snap = Snapshot(T, products, stats, carousel, covis_vv, covis_vb, user_buy, user_view, user_sub, user_cat, user_price,
                     build_secs=secs)
+    snap.full_built_at = T
     _rank_lists(snap)
     if cache:
         with path.open("wb") as f:

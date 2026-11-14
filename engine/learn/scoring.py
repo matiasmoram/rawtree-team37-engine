@@ -20,6 +20,7 @@ import numpy as np
 
 from ..config import ROOT
 from ..features import FEATURES
+from ..calibration import shift_probability
 
 
 def pc_predict(pc: dict | None, X: np.ndarray) -> np.ndarray:
@@ -64,4 +65,7 @@ class ServingModel:
             p = self.booster.predict(X, num_threads=self.num_threads)
         if self.kind == "factored":
             p = p * pc_predict(self.pc, X)
+        calibration = self.meta.get("calibration", {})
+        if calibration.get("kind") == "logit_shift":
+            p = shift_probability(p, calibration.get("shift", 0.0))
         return p

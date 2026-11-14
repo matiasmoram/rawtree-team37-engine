@@ -42,10 +42,11 @@ from ..types import Request, parse_ts, sql_ts
 
 log = logging.getLogger("learn.dataset")
 
-DATASET_VERSION = "v1"
+DATASET_VERSION = "v3_recent"
 RECENT_BUYS_WINDOW = timedelta(hours=6)   # same lookback as engine.live.RECENT_BUYS_SQL
 FEEDBACK_SLACK = timedelta(minutes=10)    # feedback ts is ~4 s after the request ts
-META_COLS = ["request_id", "ts", "user_id", "pid", "click", "purchase", "served_by", "fallback_reason", "model_version"]
+META_COLS = ["request_id", "ts", "user_id", "pid", "click", "purchase", "served_by", "fallback_reason", "model_version",
+             "subcategory", "cold_request", "device", "region"]
 
 # Feedback joined with the request (to rebuild it) and our submission (model_version). Aliases never repeat a
 # source column name: ClickHouse resolves SELECT aliases inside WHERE.
@@ -234,6 +235,7 @@ def build_dataset(rt: RawTree, since: datetime, until: datetime, snap: Snapshot 
             continue
         blocks.append(featurize(ctx, pit, items, slots=slots))
         clicked, purchased = str(row["clicked"] or ""), str(row["purchased"] or "")
+        cold_request = req.is_new_user or any(pit.products[p].is_new for p in req.viewed if p in pit.products)
         for pid in items:
             meta_rows["request_id"].append(req.request_id)
             meta_rows["ts"].append(req.ts)
@@ -244,6 +246,10 @@ def build_dataset(rt: RawTree, since: datetime, until: datetime, snap: Snapshot 
             meta_rows["served_by"].append(str(row["served_by"]))
             meta_rows["fallback_reason"].append(str(row["fallback_reason"]))
             meta_rows["model_version"].append(str(row["model_version"]))
+            meta_rows["subcategory"].append(pit.products[pid].sub)
+            meta_rows["cold_request"].append(bool(cold_request))
+            meta_rows["device"].append(req.device)
+            meta_rows["region"].append(req.region)
     t_feat = time.time() - t2
 
     X = np.vstack(blocks) if blocks else np.zeros((0, len(FEATURES)), dtype=np.float32)

@@ -34,7 +34,7 @@ log = logging.getLogger("eval")
 THETA = np.array([1.0, 0.559, 0.410, 0.318, 0.262, 0.235, 0.207, 0.183, 0.162, 0.152])
 K = len(THETA)
 
-SEGMENTS = ("all", "new_user", "home", "product_page", "category_page", "cold_item")
+SEGMENTS = ("all", "new_user", "unknown_history", "home", "product_page", "category_page", "cold_item", "cold_request")
 EVENT_TABLES = ("shop.history_events", "shop.events")
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 SETTINGS = "SETTINGS max_execution_time = 300"
@@ -185,11 +185,13 @@ def segment_masks(reqs: Sequence[Request], snap: Snapshot, new_products: set[str
     cold = {pid for pid, p in snap.products.items() if p.is_new} | new_products
     masks = {
         "all": [True for _ in reqs],
-        "new_user": [is_unknown_user(r.user_id, snap) for r in reqs],
-        "home": [not r.recent_views for r in reqs],
+        "new_user": [r.is_new_user for r in reqs],
+        "unknown_history": [is_unknown_user(r.user_id, snap) for r in reqs],
+        "home": [r.page == "home" for r in reqs],
         "product_page": [r.page == "product" for r in reqs],
         "category_page": [r.page == "category" for r in reqs],
         "cold_item": [any(p in cold for p, _ in r.recent_views) for r in reqs],
+        "cold_request": [r.is_new_user or any(p in cold for p, _ in r.recent_views) for r in reqs],
     }
     return {k: np.array(v, dtype=bool) for k, v in masks.items()}
 
