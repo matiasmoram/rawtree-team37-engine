@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Callable
 
 from ..policies.base import GlobalBestSellers, LastViewCategoryBestSellers, Policy
+from ..policies.prepare import Prepared
+from ..policies.evidence import EvidencePolicy
 from ..snapshot import Snapshot
 from ..types import Request
 from .stats import BASELINE
@@ -40,6 +42,7 @@ POLICIES: dict[str, Callable[[], Policy]] = {
     "ref-global-bestsellers": lambda: SnapshotConstant(GlobalBestSellers()),
     "ref-lastview-category": LastViewCategoryBestSellers,
     # ---- register new policies below ------------------------------------------------------------------------
+    "ev-v1": lambda: Prepared(EvidencePolicy("ev-v1")),
     # "my-policy": MyPolicy,                      # from ..policies.my_module import MyPolicy
     # "my-policy-tuned": lambda: MyPolicy(alpha=0.3),
 }

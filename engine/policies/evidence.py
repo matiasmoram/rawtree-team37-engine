@@ -38,8 +38,15 @@ ORGANIC_MEAN = 548160 / 10354047        # organic purchases per view
 
 class EvidencePolicy:
     def __init__(self, name: str = "ev-v1", recent_buy_factor: float = 0.25, covis_gain: float = 3.0,
-                 affinity_gain: float = 1.5, max_views_used: int = 6) -> None:
+                 affinity_gain: float = 1.5, max_views_used: int = 6, rel: dict[str, float] | None = None,
+                 bought_factor: float | None = None) -> None:
+        """`rel` overrides relation rates; `bought_factor` (if set) multiplies any item the user bought before,
+        instead of treating "bought before" as a positive relation (live feedback: bought items lose appeal)."""
         self.name = name
+        self.rel = {"last_view": REL_LAST_VIEW, "earlier_view": REL_EARLIER_VIEW, "bought": REL_BOUGHT,
+                    "user_viewed": REL_USER_VIEWED, "same_sub": REL_SAME_SUB, "same_cat": REL_SAME_CAT, "none": REL_NONE}
+        self.rel.update(rel or {})
+        self.bought_factor = bought_factor
         self.recent_buy_factor = recent_buy_factor
         self.covis_gain = covis_gain
         self.affinity_gain = affinity_gain
@@ -117,21 +124,26 @@ class EvidencePolicy:
             if p is None or not p.active:
                 continue
             # relation to this session / user
+            R = self.rel
+            bought = pid in ubuy
             if pid in view_rank:
                 k = view_rank[pid]
-                rel = REL_LAST_VIEW if k == 0 else REL_EARLIER_VIEW * 0.85 ** (k - 1)
-            elif pid in ubuy:
-                rel = REL_BOUGHT
+                rel = R["last_view"] if k == 0 else R["earlier_view"] * 0.85 ** (k - 1)
+            elif bought and self.bought_factor is None:
+                rel = R["bought"]
             elif pid in uview:
-                rel = REL_USER_VIEWED * (1 + 0.2 * math.log1p(uview[pid][0]))
+                rel = R["user_viewed"] * (1 + 0.2 * math.log1p(uview[pid][0]))
             elif p.sub in sess_subs:
-                rel = REL_SAME_SUB
+                rel = R["same_sub"]
             elif p.cat in sess_cats:
-                rel = REL_SAME_CAT
+                rel = R["same_cat"]
             else:
-                rel = REL_NONE
+                rel = R["none"]
+            if bought and self.bought_factor is not None:
+                rel *= self.bought_factor
             score = rel * self.quality(pid, snap, sub_quality)
-            if pid not in view_rank:
+            if pid not in view_rank and (pid not in uview or self.bought_factor is None):
+                # co-visitation is a discovery signal: v2 policies do not let it lift items the user already knows
                 score *= 1 + self.covis_gain * min(covis.get(pid, 0.0), 1.5)
             if usub:
                 score *= 1 + self.affinity_gain * usub.get(p.sub, 0.0) / usub_total
