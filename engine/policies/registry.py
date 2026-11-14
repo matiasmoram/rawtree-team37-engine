@@ -1,5 +1,6 @@
 """Policies available to the live runner, by name."""
 from .base import GlobalBestSellers, LastViewCategoryBestSellers
+from .cartfirst import CartFirstPolicy
 from .evidence import EvidencePolicy
 from .lgbm import LgbmPolicy
 
@@ -20,6 +21,10 @@ FACTORIES = {
     "lgbm-live": lambda: LgbmPolicy("lgbm-live", "cache/lgbm_live_20261114T1425.txt"),
     # v3-aff: user category affinity drives discovery items (top feature of the live ranker)
     "ev-v3-aff": lambda: EvidencePolicy("ev-v3-aff", bought_factor=0.02, covis_gain=0.0, affinity_gain=4.0, rel={"user_viewed": 2.5, "same_cat": 0.25, "same_sub": 0.25}),
+    # M1 cart-first: carts (cap 6) -> session views -> quality-ranked fill; bought items hard-excluded. Needs snap.user_cart (live runner attaches it).
+    "cf-v1": lambda: CartFirstPolicy("cf-v1"),
+    "cf-v1-cap3": lambda: CartFirstPolicy("cf-v1-cap3", cart_cap=3),
+    "cf-v1-cap10": lambda: CartFirstPolicy("cf-v1-cap10", cart_cap=10),
     "ev-v2-nocovis": lambda: EvidencePolicy("ev-v2-nocovis", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0),
 }
 
