@@ -1,0 +1,30 @@
+P1 CATEGORY EXPOSURE AUDIT
+
+== HISTORY last 7 days (old system's lists)
+a) share of DISPLAYED items in last-viewed category, by slot:
+slot         0    1    2    3    4    5    6    7    8    9
+served_by                                                  
+history    1.0  1.0  1.0  1.0  1.0  1.0  1.0  1.0  1.0  1.0
+b) per-impression rates, conditional on exposure (in vs out of last-viewed category):
+                       impressions  clicks  buys  click_%  buy_%
+served_by in_last_cat                                           
+history   True             1974340    8857  3447    0.449  0.175
+   share of purchases in last-viewed category: {'history': 1.0}
+e) requests without any recent view: 49944/247378 = 20.2%
+
+== LIVE (fallback = session-blind best sellers; teammate lists)
+a) share of DISPLAYED items in last-viewed category, by slot:
+slot          0     1     2     3     4     5     6     7     8     9
+served_by                                                            
+fallback   0.14  0.08  0.11  0.11  0.10  0.07  0.13  0.13  0.11  0.14
+team       0.91  0.87  0.84  0.75  0.65  0.57  0.44  0.40  0.33  0.32
+b) per-impression rates, conditional on exposure (in vs out of last-viewed category):
+                       impressions  clicks  buys  click_%  buy_%
+served_by in_last_cat                                           
+fallback  False              23773      46    19    0.193  0.080
+          True                2977      25    14    0.840  0.470
+team      False              17736      35    11    0.197  0.062
+          True               27404     109    32    0.398  0.117
+   share of purchases in last-viewed category: {'fallback': 0.424, 'team': 0.744}
+e) requests without any recent view: 1812/9001 = 20.1%
+

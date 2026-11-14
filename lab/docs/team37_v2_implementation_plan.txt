@@ -1,0 +1,439 @@
+TEAM 37 — RAWTREE DATATHON 2026
+V2 IMPLEMENTATION SPECIFICATION
+Baseline: Architecture A (team37-recsys.pdf)
+Purpose: Incremental improvements AFTER V1/A is working; preserve A unchanged as the reference and immediate rollback.
+Status: Proposed implementation plan. No performance improvements are claimed until validated.
+
+======================================================================
+0. DECISION AND NON-NEGOTIABLES
+======================================================================
+
+KEEP ARCHITECTURE A as the starting point:
+  - Multinomial category model and category-aware candidate generation.
+  - Candidate sources: co-views, popularity, ALS, and text embeddings.
+  - Pretrained LightGBM product ranker.
+  - Existing greedy slate construction, availability checks, and fallback.
+  - Fast request-serving loop and independent slow updates loop.
+  - RawTree integration with one submitting process.
+
+BUILD V2 ON TOP OF A. Do NOT replace the existing system with end-to-end RL,
+Q-learning, REINFORCE or actor-critic. Do NOT introduce a proxy, multiple live
+models, or a second submitting service.
+
+The core V2 hypothesis:
+  V2_score = A_base_score + bounded_online_contextual_correction
+
+The online component learns from feedback while the pretrained components
+retain their historical knowledge. Uncertainty-aware exploration is an
+OPTIONAL subsequent upgrade, not a prerequisite for V2.
+
+Deployment rule:
+  - Exactly one active recommendation policy / one submitting process.
+  - A is preserved as immutable model artifacts, config, and code/version tag.
+  - V2 additions are gated by configuration flags.
+  - Switching all V2 flags OFF must reproduce A's recommendations for a
+    fixed request + catalogue/feature snapshot (except explicitly logged
+    existing randomness). This is the most important regression test.
+  - On failure or poor results, revert to A without retraining or migration.
+
+======================================================================
+1. PHASE P0 — FREEZE A AND MEASURE IT (REQUIRED BEFORE V2)
+======================================================================
+
+1.1. Snapshot all A artifacts:
+  - Category classifier + preprocessing.
+  - LightGBM model + feature column order + preprocessing + calibration.
+  - ALS factors, co-view neighbours, embeddings, popularity tables.
+  - Slate builder, Thompson configuration, fallback.
+  - Catalogue and feature snapshot used for the benchmark.
+  - Code commit, environment/package versions, random seeds.
+
+1.2. Add lightweight request-level instrumentation:
+  request_id, timestamp, user_id or stable anonymised grouping key,
+  is_new_user, context, recent_views, model_version, request feature version,
+  candidate IDs, category scores, product raw base scores, final 10 IDs,
+  final positions, stock-check result, inference time, submission outcome.
+
+  On feedback: request_id, feedback timestamp, clicked item, purchased item,
+  revenue, completion/finality status if applicable, and whether it has been
+  used for learning.
+
+  Persist serving-time features or reconstruct them from immutable snapshots.
+  Never rebuild training features using information from AFTER the request.
+
+1.3. Calculate and save A's baseline metrics:
+  - Valid and on-time submission rate; end-to-end p50/p95/p99 latency.
+  - Historical offline ranking diagnostics on a chronological holdout.
+  - First-slot IPS/SNIPS with effective sample size and confidence intervals,
+    when logged exposure support permits estimation.
+  - Observed live purchase rate and clicks with sample sizes.
+  - Results by: new vs returning users, recent-view vs no-view sessions,
+    new vs established products, category, position and region/device if
+    sufficient sample size.
+  - Number of candidates and stock fallback frequency.
+
+  Historical hit-rate/NDCG are diagnostic, NOT unbiased estimates of a new
+  policy's conversion. No observational comparison should be represented as
+  a definitive online uplift.
+
+ACCEPTANCE P0:
+  [ ] A runs end to end and remains recoverable.
+  [ ] Baseline report and frozen artifacts saved.
+  [ ] V2-disabled regression output equals A.
+  [ ] Logging and feedback joins verified by request_id.
+
+======================================================================
+2. PHASE P1 — AUDIT THE CATEGORY SIGNAL (DO NOT CHANGE A YET)
+======================================================================
+
+PDF finding to verify: 100% of purchases match last viewed item's category.
+This may be a powerful preference signal OR partly a consequence of which
+categories the historical recommender displayed.
+
+For historical sessions with a last view, compute:
+  a) Fraction of DISPLAYED products in the last-viewed category, per slot.
+  b) Fraction of PURCHASES in that category, conditional on exposure.
+  c) Purchase outcomes for sessions exposing multiple categories.
+  d) Category match by new/returning users, device/page, and time period.
+  e) Fraction of requests without a recent view; category fallback behavior.
+  f) Whether the match also holds on ORGANIC purchases (only if their
+     context can be matched to last views without future leakage).
+
+Do not infer the customer's counterfactual category preference merely from
+historically observed purchases; the logging policy is selection-biased.
+
+IMPLEMENTATION DECISION:
+  - Preserve A's category head and candidate generator as the default.
+  - Introduce configurable category coverage (e.g., top-1 vs top-2/3 or
+    calibrated soft allocation) ONLY if evaluation supports it.
+  - Never turn the reported 100% into an unvalidated hard exclusion rule.
+  - Keep fallback for no-view / cold-start requests intact.
+
+ACCEPTANCE P1:
+  [ ] Category exposure audit documented.
+  [ ] Category coverage remains unchanged unless evidence supports a change.
+
+======================================================================
+3. PHASE P2 — ADD AN ONLINE CONTEXTUAL CORRECTION (PRIMARY V2 CHANGE)
+======================================================================
+
+3.1. Serving concept:
+  A's frozen LightGBM predicts base relevance for each candidate.
+  V2 adds a SMALL score adjustment learned from completed live feedback.
+
+  base_logit(s,i) = logit(calibrated_p_A(s,i))
+  delta_t(s,i)    = theta_t^T * phi_online(s,i)
+  v2_logit(s,i)   = base_logit(s,i) + clip(delta_t, -D_MAX, D_MAX)
+
+  Rank by v2_logit, then use A's slate builder, validation and fallback.
+  If A's LightGBM output is not a calibrated purchase probability, DO NOT
+  take its logit directly. Fit and freeze a time-split calibrator, or work in
+  its original score space with a separately validated scaling.
+
+  IMPORTANT: A's existing ranker may use features defined before positions
+  are assigned, whereas online feedback depends on the actual displayed
+  positions. Treat position as an explicit feature of the FEEDBACK learning
+  likelihood; do not accidentally use future slot positions at candidate
+  ranking time.
+
+3.2. Keep online features compact and stable (initially about 20–50
+meaningful, standardised features; actual count is not a requirement):
+  - Category model probability for item's category.
+  - Category/subcategory match to recent views.
+  - Co-view and ALS scores, normalised.
+  - Product age/new-product flag.
+  - Relative price to session/history, if defined.
+  - Short vs long window trend score with smoothing.
+  - User novelty and recent-view availability.
+  - Device/page/region groups ONLY if enough feedback exists.
+  - Interaction features where empirically useful.
+
+  Avoid high-cardinality item/user one-hot coefficients at the start:
+  online feedback will be sparse. Use existing A features and shared group
+  generalisation. Define explicit defaults for unknown users/items.
+
+3.3. Train correction using the ACTUALLY DISPLAYED slate and its outcome:
+  - Feedback identifies either one purchased item or no purchase.
+  - Do not train on products that were not displayed as if they were rejected.
+  - Do not label organic purchases as rewards caused by the policy.
+  - Keep the request's feature snapshot, selected slate and position.
+
+  Recommended loss for an incremental correction: multinomial choice with
+  a no-purchase alternative. For displayed products k=1..10:
+
+    utility_k = frozen_base_utility_k + theta^T phi(s,item_k,position_k)
+    utility_0 = calibrated_no_purchase_intercept
+    P(Y=k)   = exp(utility_k) / [exp(utility_0)+sum_j exp(utility_j)]
+    P(Y=0)   = exp(utility_0) / [exp(utility_0)+sum_j exp(utility_j)]
+    loss     = -log P(observed choice) + lambda * ||theta||^2
+
+  The baseline utilities and no-purchase term must be CALIBRATED from
+  chronological historical data. This model assumes at most one identified
+  purchase outcome and a choice-process approximation. Verify the actual
+  feedback schema and do not silently treat premature / missing feedback
+  as a final no-purchase label.
+
+  If this likelihood cannot be calibrated reliably, first use a simpler
+  online recalibrator on the whole-slate purchase outcome; keep its effect
+  bounded. Do not implement a naive ten-independent-negative training loop.
+
+3.4. Online update:
+  - Initialise theta = 0 (exact A scores before learning).
+  - Process only new, finalised feedback; deduplicate request_id.
+  - Update by mini-batch SGD / Adam or FTRL using the saved slate examples.
+  - Regularise toward theta=0 (A as prior): lambda * ||theta||^2.
+  - Clip gradients and bound the per-item correction.
+  - Use a low initial learning rate; add minimum-feedback warm-up.
+  - Periodically checkpoint theta, optimiser state, last processed cursor.
+  - Run updates outside the fast inference request path.
+  - Atomically replace the correction snapshot read by the fast loop.
+  - If feedback quality deteriorates, automatically freeze theta updates.
+
+  Start with no exploration changes. This isolates whether ONLINE LEARNING
+  itself contributes anything before changing the traffic-generating policy.
+
+3.5. Guardrails:
+  - Max correction D_MAX is configurable and small initially; choose it
+    via chronological validation, not an arbitrary production guess.
+  - No online parameter update may affect catalogue availability rules.
+  - Do not let the correction swamp a strong category/context signal without
+    positive evidence.
+  - Missing features -> zeros/defaults; corrupted state -> A unchanged.
+  - Parameter updates must never delay response generation.
+
+ACCEPTANCE P2:
+  [ ] When theta=0, V2 output is identical to A under frozen input/state.
+  [ ] One feedback event causes at most one online training update.
+  [ ] No look-ahead leakage; no double-counting organic purchases.
+  [ ] Online loss decreases on sequential validation without instability.
+  [ ] Reliability and p95 end-to-end latency stay within guardrails.
+  [ ] Rollback to A is a single configuration change.
+
+======================================================================
+4. PHASE P3 — IMPROVE HANDLING OF DRIFT (LOW RISK, HIGH PRIORITY)
+======================================================================
+
+Preserve A's 1–5 minute slow loop (as documented); improve the dynamic feature
+quality rather than moving expensive aggregation into the fast loop.
+
+4.1. Maintain separate time scales:
+  - Fast/short window activity (e.g., recent 15-minute counts).
+  - Slower historical baseline by product/subcategory.
+  - Long-term preference features from A.
+
+4.2. Use smoothed counts / rates for low-traffic products:
+  - Include exposure counts when estimating conversion.
+  - Add priors or shrinkage; three views vs one view is not proof of trend.
+  - Keep uncertainty/sample counts alongside moving averages.
+  - Record when each statistic was last updated.
+
+4.3. Prevent stale state and feedback misuse:
+  - Independent persistent cursors for requests, events, catalogue updates,
+    and feedback.
+  - De-duplicate events; catch up after restart; process in timestamp order
+    where feasible.
+  - If data lag exceeds threshold, stop online updates and use A's stable
+    features or last consistent snapshot.
+  - Catalogue stock/price changes must be applied before final validation.
+  - New items receive content embeddings + category features even with zero
+    exposures; no cold-start item must require a learned item-specific ID.
+
+4.4. Evaluate parameter forgetting carefully:
+  - Consider recency-weighted online training or a sliding feedback window.
+  - Do not discard frozen historical model knowledge.
+  - Detect drift on calibration/error and conversion by group; do not
+    reset parameters solely due to a short-term traffic spike.
+
+ACCEPTANCE P3:
+  [ ] Event replay is idempotent and restart-safe.
+  [ ] New products can enter candidate pool without full retraining.
+  [ ] Catalog updates never produce knowingly out-of-stock submissions.
+
+======================================================================
+5. PHASE P4 — CONSERVATIVE UNCERTAINTY-AWARE EXPLORATION (OPTIONAL)
+======================================================================
+
+PDF A currently uses Thompson Sampling for positions 9–10. Keep that as the
+BASELINE exploration policy until direct evidence supports modifying it.
+
+Potential V2 improvement:
+  - Estimate uncertainty about the small online correction (e.g., diagonal
+    Gaussian/Laplace approximation or simple posterior on grouped effects).
+  - Use contextual Thompson Sampling or UCB-like bonuses to select uncertain
+    BUT PLAUSIBLE products within candidate pool.
+  - Account for actual position effects: low-visibility positions yield less
+    feedback; higher positions cost more immediate conversion when explored.
+  - Limit uncertainty bonuses and maximum number of exploratory items.
+  - Restrict exploration to active, category-relevant products unless
+    experiments support broader coverage.
+  - Reduce exploration near the end of the horizon if the information gained
+    has little time to repay the conversion cost.
+
+IMPORTANT EXPERIMENTAL HYGIENE:
+  - Explicitly record sampling seed, policy version, candidate set and the
+    actual probability of each randomised decision when computable.
+  - Full-slate selection probabilities can be hard to compute; do not claim
+    exact IPS support from only marginal per-product probabilities.
+  - If exploration is not demonstrably beneficial, disable P4 and keep A's
+    original method. No V2 release should depend on P4.
+
+ACCEPTANCE P4:
+  [ ] Exploration can be disabled independently of P2/P3.
+  [ ] No uncontrolled or invalid slate choices.
+  [ ] Improvement supported by credible sequential/counterfactual evidence.
+
+======================================================================
+6. PHASE P5 — SLATE CONSTRUCTION IMPROVEMENTS (EXPERIMENTAL)
+======================================================================
+
+PDF A uses a greedy objective approximately:
+  P(any purchase) ~ 1 - product_k(1 - p_k * slot_weight_k)
+
+Maintain this as the baseline. Do not assume it automatically yields category
+diversity or that product purchase events are independent.
+
+Investigate OFFLINE:
+  - Whether the model's p_k are calibrated for the slot where displayed.
+  - Whether redundancy penalties help or hurt conversion (e.g., many similar
+    products may be appropriate for a customer comparing alternatives).
+  - Whether a slate-level no-purchase choice model improves prediction.
+  - Whether position-aware reranking changes first-slot performance.
+
+Only replace A's greedy selection if a held-out chronological evaluation
+supports a gain and inference remains comfortably within deadline.
+
+======================================================================
+7. FEATURE FLAGS, FILE LAYOUT, AND INTERFACES
+======================================================================
+
+Suggested config flags:
+  USE_ONLINE_CORRECTION = false     # P2, off by default
+  USE_DRIFT_FEATURES    = false     # P3 enhancements, off by default
+  USE_CONTEXTUAL_TS     = false     # P4, off by default
+  USE_NEW_SLATE_BUILDER = false     # P5, off by default
+  MAX_ONLINE_CORRECTION = configured/tuned value
+  ONLINE_LEARNING_RATE  = configured/tuned value
+  MIN_FINAL_FEEDBACK    = configured/tuned value
+  MODEL_VERSION         = "team37-a" or "team37-v2"
+
+Possible module layout (adapt to existing A repository, do not restructure
+it unnecessarily):
+  recommender/serve.py             # Existing A fast loop, minimal changes
+  recommender/candidates.py        # Existing A candidate sources
+  recommender/base_ranker.py       # Frozen A LightGBM + category model
+  recommender/online_features.py   # Online correction feature definitions
+  recommender/online_head.py       # Bounded delta and incremental updates
+  recommender/feedback_worker.py   # Join request/slate/feedback and train
+  recommender/stream_state.py      # Trend/catalogue/user updates and cursors
+  recommender/policy.py            # Flags + single active recommendation
+  recommender/monitoring.py        # Latency, errors, drift, calibration
+  tests/test_a_parity.py           # V2 disabled == A
+  tests/test_feedback_idempotency.py
+  tests/test_no_leakage.py
+  tests/test_cold_start.py
+  tests/test_submission_safety.py
+
+Conceptual service path:
+  request = fetch_next_request()
+  state = consistent_feature_snapshot()
+  candidates = A.generate_candidates(request, state)
+  base_scores = A.rank(candidates, request, state)
+  if USE_ONLINE_CORRECTION and correction_is_healthy:
+      scores = add_bounded_delta(base_scores, online_head, request, state)
+  else:
+      scores = base_scores
+  slate = A.construct_slate(scores, state)  # until P5 is validated
+  slate = validate_or_fallback(slate, state.catalogue)
+  submit_once(request.request_id, slate, model_version)
+  log_request_context_and_displayed_slate(...)
+
+Independent background worker:
+  for feedback in finalized_unprocessed_feedback():
+      example = join_feedback_to_logged_displayed_slate(feedback)
+      if USE_ONLINE_CORRECTION and example_is_valid:
+          online_head.update(example)
+      mark_feedback_processed_once(feedback.request_id)
+  atomically_publish_updated_model_snapshot()
+
+Note: The online head is a correction inside ONE composite deployed policy,
+not a second independent live recommender. One submission per request.
+
+======================================================================
+8. EVALUATION, RELEASE GATES, AND ROLLBACK
+======================================================================
+
+Compare the following SEQUENTIALLY; never conflate their incremental effects:
+  A0: Frozen A exactly as in PDF.
+  V2.1: A + online correction only.
+  V2.2: V2.1 + improved short/long-term drift features.
+  V2.3: V2.2 + contextual exploration (only if evidence supports it).
+  V2.4: V2.3 + revised slate builder (optional).
+
+Use the SAME chronological historical splits and feature snapshots for
+offline comparisons. For an online learner, replay examples in time order:
+predict -> score/store -> receive observed feedback -> update. Do not let
+an event from the future update the past.
+
+Metrics / release criteria:
+  - Overall purchase conversion (primary; credible confidence intervals).
+  - Cold-start conversion (new shoppers + new products where definable).
+  - Purchase calibration and negative log likelihood for displayed slates.
+  - Offline IPS/SNIPS for supported estimands + effective sample size;
+    full-slate counterfactual conversion may be unidentifiable from logs.
+  - Valid/on-time rate and p50/p95/p99 end-to-end latency.
+  - Fallback frequency, duplicate submissions, unknown/stock-out products.
+  - Feedback processing lag, missed events, correction magnitude, drift.
+
+Because only ONE policy may run simultaneously:
+  - Do not claim shadow predictions measure alternative conversion.
+  - Prefer strong chronological offline tests; if organizers permit, use
+    randomized assignment within the ONE submitting policy for causal A/B.
+  - If not permitted, controlled sequential rollouts are possible but are
+    confounded by traffic changes; avoid claiming causal uplift from them.
+  - Preserve A as the comparison benchmark and emergency rollback.
+
+Minimum deployment gates (tune exact thresholds to verified A metrics):
+  [ ] End-to-end p95 comfortably below the 3-second deadline.
+  [ ] No regression in validity or ability to recover from outages.
+  [ ] No evidence of significant conversion degradation on supported tests.
+  [ ] Reasonable cold-start behavior and no newly excluded valid products.
+  [ ] Online updates stable; no unbounded parameter/uncertainty growth.
+  [ ] V2 disabled returns A output using the same state and random seed.
+
+ROLLBACK:
+  1. Set USE_ONLINE_CORRECTION, USE_CONTEXTUAL_TS,
+     USE_NEW_SLATE_BUILDER to false (and drift additions if needed).
+  2. Reload immutable A model/feature artifacts.
+  3. Keep live serving and catalogue checks running; stop online updater.
+  4. Preserve logs/checkpoints for postmortem; do not delete A artifacts.
+
+======================================================================
+9. PRIORITY ORDER / DEFINITION OF DONE
+======================================================================
+
+MUST SHIP, IN ORDER:
+  P0 Freeze A, logs, offline benchmark, rollback parity.
+  P1 Verify the 100% category-match exposure issue.
+  P2 Online correction from properly joined, finalised recommendation
+     feedback, with bounded updates and frozen A prior.
+  P3 Robust drift features + idempotent stream and catalogue handling.
+
+SHIP ONLY IF TIME + EVIDENCE:
+  P4 Uncertainty-aware exploration beyond fixed slots 9-10.
+  P5 Alternative slate-level objective / diversity treatment.
+
+V2 is DONE when:
+  - A remains loadable as the untouched reference.
+  - V2 can serve ALL requests with exactly one submitting process.
+  - Online learning demonstrably changes the same policy's predictions
+    after valid feedback without violating serving reliability.
+  - The contribution of each optional change is measured separately.
+  - The team can roll back to A immediately through a config toggle.
+
+SOURCE OF BASELINE A:
+  team37-recsys.pdf, pages 1–4 (Team 37 RawTree architecture).
+
+SCOPE NOTE:
+  This is a V2 implementation proposal based on the PDF and the challenge
+  discussion. Category statistics, feature importance, calibrated scores,
+  feedback timing and attainable performance must be checked in real data.
