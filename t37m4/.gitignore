@@ -1,0 +1,4 @@
+data/
+.env
+STOP_SUBMIT
+models/thompson/posterior_v*.pkl
