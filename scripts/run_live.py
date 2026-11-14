@@ -11,13 +11,13 @@ from engine.live import LiveRunner
 from engine.policies.registry import get_policy
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--arms", default="lgbm-recent:45,cf-v1:20,cf-rot:15,skibidy-v1:20",
-                help="policy:share,... shares add up to 100; recent ranker/cart arms plus a measured online-learning trial")
+ap.add_argument("--arms", default="lgbm-recent:80,cf-v1:20",
+                help="policy:share,... shares add up to 100; one purchase ranker and one cart-first challenger")
 ap.add_argument("--dry-run", action="store_true")
 ap.add_argument("--shard-index", type=int, default=0, help="exclusive request shard; coordinate on every writer")
 ap.add_argument("--shard-count", type=int, default=1, help="all writers must use the same count")
 ap.add_argument("--experiment-until", help="fixed UTC ISO deadline; restores --after-arms without restarting")
-ap.add_argument("--after-arms", default="cf-v1:100")
+ap.add_argument("--after-arms", default="lgbm-recent:100")
 args = ap.parse_args()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s",
                     handlers=[logging.StreamHandler(), logging.FileHandler(LOGS / "live.log", encoding="utf-8")])
