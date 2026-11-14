@@ -26,6 +26,8 @@ FACTORIES = {
     "cf-v1-cap3": lambda: CartFirstPolicy("cf-v1-cap3", cart_cap=3),
     "cf-v1-cap10": lambda: CartFirstPolicy("cf-v1-cap10", cart_cap=10),
     "ev-v2-nocovis": lambda: EvidencePolicy("ev-v2-nocovis", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0),
+    # Experiment only. Loads cache/new_product_neighbors.json produced by scripts/build_embeddings.py.
+    "ev-v2-cold": lambda: EvidencePolicy("ev-v2-cold", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0, content_neighbors=True),
 }
 
 

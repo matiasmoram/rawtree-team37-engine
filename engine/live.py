@@ -81,6 +81,16 @@ class LiveRunner:
         self.lock = threading.Lock()
         self.clock_offset = 0.93  # server clock minus local clock (measured ~+0.93s at 14:48); refreshed, seconds (deadlines use the server clock)
         self.seen_lock = threading.Lock()
+        # For shared team deployments, configure disjoint hash buckets on each emitter.
+        # Example: host A 0:50, host B 50:100. Defaults to owning every request.
+        ownership = os.environ.get("RAWTREE_OWNER_BUCKETS", "0:100")
+        try:
+            self.owner_start, self.owner_end = map(int, ownership.split(":"))
+            if not (0 <= self.owner_start < self.owner_end <= 100):
+                raise ValueError("out of range")
+        except (ValueError, TypeError) as exc:
+            raise ValueError("RAWTREE_OWNER_BUCKETS must be 'start:end' with 0 <= start < end <= 100") from exc
+        self.push_slots = threading.BoundedSemaphore(PUSH_WORKERS)
 
     def measure_offset(self, rt: RawTree) -> None:
         """Server-minus-local clock offset from the fastest round trips. Never raises: keeps the last value."""
@@ -181,6 +191,10 @@ class LiveRunner:
                 now = time.time()
                 for row in rows:
                     rid = str(row.get("request_id"))
+                    bucket = arm_bucket(rid)
+                    if not (self.owner_start <= bucket < self.owner_end):
+                        # Do not submit requests assigned to a different, coordinated writer.
+                        continue
                     with self.seen_lock:
                         if rid in self.seen:
                             continue
@@ -280,7 +294,24 @@ class LiveRunner:
                     snap = self.snap
                     for _, rec in batch:
                         rec["items"] = self.valid_items(rec["items"], snap)
-                    pool.submit(self._send, batch)
+                    if self.push_slots.acquire(blocking=False):
+                        def bounded_send(rows):
+                            try:
+                                self._send(rows)
+                            finally:
+                                self.push_slots.release()
+                        try:
+                            pool.submit(bounded_send, batch)
+                        except Exception:
+                            self.push_slots.release()
+                            for item in batch:
+                                self.outbox.put(item)
+                            raise
+                    else:
+                        # All HTTP workers are busy: keep a bounded queue rather than
+                        # submitting unlimited futures that will become stale.
+                        for item in batch:
+                            self.outbox.put(item)
             time.sleep(PUSH_EVERY)
 
     def stock(self) -> None:
@@ -390,7 +421,8 @@ class LiveRunner:
             log.warning("could not preload answered ids: %s", str(e)[:200])
         for t in threads:
             t.start()
-        log.info("live runner started (dry_run=%s) arms=%s", self.dry_run, [(p.name, s) for p, s in self.arms])
+        log.info("live runner started (dry_run=%s) owner_buckets=%d:%d arms=%s",
+                 self.dry_run, self.owner_start, self.owner_end, [(p.name, s) for p, s in self.arms])
         try:
             while True:
                 time.sleep(1)
