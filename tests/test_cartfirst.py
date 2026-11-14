@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.policies.cartfirst import CartFirstPolicy
 from engine.content import ContentIndex
 from engine.policies.registry import get_policy
+from engine.learn.linucb import RidgeBandit, exposure_weight
 from engine.snapshot import Product, Snapshot, _rank_lists
 from engine.types import Request
 
@@ -32,6 +33,9 @@ def make_snapshot(n=120):
 def request(user="u1", views=(), new=False):
     return Request("r1", NOW, user, new, "product", "ios", "eu",
                    [(p, NOW - timedelta(minutes=i + 1)) for i, p in enumerate(views)])
+
+
+req = request  # shared fixture name used by the standalone online learner tests
 
 
 class CartFirstTests(unittest.TestCase):
@@ -83,6 +87,22 @@ class CartFirstTests(unittest.TestCase):
         policy.inner.recommend = lambda req, snap: captured.setdefault("views", req.viewed) or []
         policy.recommend(request(views=("p80", "p81")), self.snap)
         self.assertEqual(captured["views"][:2], ["p81", "p80"])
+
+
+class BanditCoreTests(unittest.TestCase):
+    def test_ridge_recovers_a_linear_signal(self):
+        import numpy as np
+        rng = np.random.default_rng(0)
+        truth = np.array([1.0, -0.5, 0.0, 2.0])
+        bandit = RidgeBandit(4, gamma=1.0, seed=1)
+        for _ in range(1000):
+            x = rng.normal(size=4)
+            bandit.update(x, float(x @ truth + rng.normal(scale=.1)))
+        self.assertTrue(np.allclose(bandit.theta, truth, atol=.08))
+
+    def test_slot_exposure_weight_decreases(self):
+        self.assertAlmostEqual(exposure_weight(1), 1.0)
+        self.assertGreater(exposure_weight(2), exposure_weight(10))
 
 
 if __name__ == "__main__":

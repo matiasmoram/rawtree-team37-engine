@@ -32,7 +32,9 @@ def main():
     parser.add_argument("--since", required=True)
     parser.add_argument("--until", required=True)
     parser.add_argument("--snapshot", type=Path)
-    parser.add_argument("--policies", default="ev-v2-nocovis,ev-v3,ev-content,ev-v4-session")
+    # Replay can compare observed-list rankings only for policies that expose scores.
+    # The online-only slate policies are evaluated prospectively on the public leaderboard.
+    parser.add_argument("--policies", default="ev-content,ev-recent-covis,ev-v3")
     parser.add_argument("--max-requests", type=int, default=6000)
     parser.add_argument("--bootstrap", type=int, default=500)
     parser.add_argument("--no-cache", action="store_true")

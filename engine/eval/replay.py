@@ -47,6 +47,15 @@ def valid_list(items: Sequence[str], req: Request, snap: Snapshot) -> bool:
     return len(items) == 10 and len(set(items)) == 10 and all(known_at(pid, snap, req) for pid in items)
 
 
+def name_has_rerank(policy) -> bool:
+    """Policies without scored_candidates/extra_candidates cannot rerank the observed list.
+
+    They still contribute support, latency and hit-proxy metrics; their rerank
+    entries stay None and are excluded from paired comparisons automatically.
+    """
+    return hasattr(policy, "scored_candidates") and hasattr(policy, "extra_candidates")
+
+
 def rerank_observed(policy, req: Request, snap: Snapshot, shown: list[str]) -> list[str] | None:
     """Score every shown item, even when absent from the policy candidate pool.
 
@@ -128,6 +137,7 @@ def evaluate_replay(rows: list[dict], snapshot: Snapshot, policies: Sequence,
     prepare_snapshot(pit)
     names = [p.name for p in policies]
     control = names[0]
+    rerank_unsupported = [p.name for p in policies if not name_has_rerank(p)]
     records = []
     dropped_future_views = 0
     unsupported_observed = 0
@@ -154,7 +164,10 @@ def evaluate_replay(rows: list[dict], snapshot: Snapshot, policies: Sequence,
             started = time.perf_counter()
             items = list(policy.recommend(req, pit))
             elapsed = 1000 * (time.perf_counter() - started)
-            ordered = rerank_observed(policy, req, pit, shown) if supported else None
+            if supported and name_has_rerank(policy):
+                ordered = rerank_observed(policy, req, pit, shown)
+            else:
+                ordered = None
             if control_items is None:
                 control_items = items
             record["models"][policy.name] = {
@@ -209,7 +222,7 @@ def evaluate_replay(rows: list[dict], snapshot: Snapshot, policies: Sequence,
                                             "max": (requests[-1].ts - snapshot.T).total_seconds()},
             "catalog_updates_replayed": replay.i, "future_views_dropped": dropped_future_views,
             "unsupported_observed_lists": unsupported_observed, "control": control,
-            "policies": names, "segments": segments,
+            "policies": names, "rerank_unsupported_policies": rerank_unsupported, "segments": segments,
             "bootstrap": {"unit": "user", "replicates": n_boot, "seed": seed,
                           "scope": "paired observed-list NDCG differences, no simulator probabilities"},
             "runtime_seconds": round(time.monotonic() - t0, 3),

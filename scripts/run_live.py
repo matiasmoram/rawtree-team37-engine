@@ -11,8 +11,8 @@ from engine.live import LiveRunner
 from engine.policies.registry import get_policy
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--arms", default="lgbm-recent:60,cf-v1:20,cf-rot:20",
-                help="policy:share,... shares add up to 100; default favors the recent ranker and tests two cart/session policies")
+ap.add_argument("--arms", default="lgbm-recent:45,cf-v1:20,cf-rot:15,skibidy-v1:20",
+                help="policy:share,... shares add up to 100; recent ranker/cart arms plus a measured online-learning trial")
 ap.add_argument("--dry-run", action="store_true")
 ap.add_argument("--shard-index", type=int, default=0, help="exclusive request shard; coordinate on every writer")
 ap.add_argument("--shard-count", type=int, default=1, help="all writers must use the same count")

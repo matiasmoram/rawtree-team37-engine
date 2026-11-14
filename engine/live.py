@@ -51,6 +51,21 @@ SELECT request_id::String AS request_id, ts::DateTime64(3) AS ts, user_id::Strin
        context.region::String AS region, recent_views
 FROM shop.requests WHERE ts::DateTime64(3) > '{since}' ORDER BY ts"""
 
+FEEDBACK_SQL = """
+SELECT request_id::String AS request_id, ts::DateTime64(3) AS ts, served_by::String AS served_by,
+       shown, clicked::String AS clicked, purchased::String AS purchased,
+       if(s.mv = '', '(unmatched)', s.mv) AS model_version
+FROM {team}.feedback
+LEFT JOIN (
+  SELECT request_id::String AS rid, items::Array(String) AS sent_items,
+         if(uniqExact(model_version::String) = 1, any(model_version::String), '(ambiguous)') AS mv
+  FROM {team}.submissions GROUP BY rid, sent_items
+) AS s ON s.rid = request_id::String AND s.sent_items = shown::Array(String)
+WHERE request_id::String != '__init__'
+  AND ts::DateTime64(3) > '{since}'
+  AND ts::DateTime64(3) < now64(3) - INTERVAL 120 SECOND
+ORDER BY ts"""
+
 RECENT_BUYS_SQL = """
 SELECT u, groupUniqArray(p) AS ps FROM (
   SELECT user_id::String AS u, product_id::String AS p FROM shop.events
@@ -398,6 +413,23 @@ class LiveRunner:
                 log.warning("cart refresh failed: %s", str(e)[:200])
             self.stop.wait(1.5)
 
+    def learner(self) -> None:
+        """Update only from mature feedback; policies match the exact slate they proposed."""
+        learners = [policy for policy, _ in self.arms if hasattr(policy, "observe")]
+        if not learners:
+            return
+        rt = RawTree(timeout=10)
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        while not self.stop.wait(10.0):
+            try:
+                rows = rt.query(FEEDBACK_SQL.format(team=self.team, since=sql_ts(since)), timeout=8, retries=0)
+                if rows:
+                    since = max(parse_ts(row["ts"]) for row in rows) - timedelta(seconds=1)
+                    for policy in learners:
+                        policy.observe(rows)
+            except Exception as e:
+                log.warning("online learner refresh failed: %s", str(e)[:160])
+
     def refresher(self) -> None:
         rt = RawTree(timeout=60)
         last_fast = time.time()
@@ -485,7 +517,7 @@ class LiveRunner:
         self.build()
         self.takeover()
         threads = [threading.Thread(target=t, name=t.__name__, daemon=True)
-                   for t in (self.pusher, self.stock, self.carts, self.refresher, self.rebuilder, self.reporter,
+                   for t in (self.pusher, self.stock, self.carts, self.learner, self.refresher, self.rebuilder, self.reporter,
                              self.metadata_writer, self.refresh_policy_signals)]
         threads += [threading.Thread(target=self.poller, args=(i * POLL_SLEEP / N_POLLERS,), name=f"poller{i}", daemon=True)
                     for i in range(N_POLLERS)]

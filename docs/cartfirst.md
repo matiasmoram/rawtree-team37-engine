@@ -15,15 +15,19 @@ and validates a unique ten-item slate. The cart table is loaded at startup and
 incrementally refreshed from `shop.events` every 1.5 seconds. If loading fails,
 the policy still returns a valid slate from its non-cart signals.
 
-The live allocation is `lgbm-recent:60,cf-v1:20,cf-rot:20`. The newest public
+The prior live allocation was `lgbm-recent:60,cf-v1:20,cf-rot:20`. The current trial
+is `lgbm-recent:45,cf-v1:20,cf-rot:15,skibidy-v1:20`: it keeps most traffic on
+the strongest recent arms while giving the newly merged online learner enough traffic
+to collect feedback. The newest public
 15-minute view showed 1.874 expected purchases per 100 for `lgbm-recent` and
 1.416 for `cf-v1`; the windows overlap previous traffic and are not a causal
 comparison. `cf-rot` tests the team's observation that an earlier session view in
 slot 1 converted more often than the most recent view (2.08% vs 0.66%). This is a
 prospective trial, not a claim that any policy already beats the public score.
 Team-wide online comparisons still require other emitters to remain stopped and
-reliable submission transport. `ev-v2-nocovis` remains available for historical
-replay, but is removed from runner defaults and the active allocation.
+reliable submission transport. The old `ev-v2-nocovis` arm has been removed from
+the policy registry and evaluator defaults; current comparisons focus on recent
+LightGBM, cart-first, rotation, revenue-aware, and online-learning policies.
 
 The companion branch also contains a Ridge/LinUCB core. It is not activated:
 the code has no mature-feedback updater or validated end-to-end propensity and

@@ -6,6 +6,8 @@ from .content import ContentPolicy, RecentCovisPolicy
 from .explore import TailExplorePolicy
 from .cartfirst import CartFirstPolicy
 from .variants import VARIANTS
+from .money import MoneyPolicy
+from .skibidy import SkibidyPolicy
 
 FACTORIES = {
     "ev-content": ContentPolicy,
@@ -15,6 +17,12 @@ FACTORIES = {
     "ev-content-tail": lambda: TailExplorePolicy(ContentPolicy(), name="ev-content-tail", epsilon=0.05),
     "cf-v1": lambda: CartFirstPolicy("cf-v1"),
     "cf-v1-cap3": lambda: CartFirstPolicy("cf-v1-cap3", cart_cap=3),
+    "cf-v1-cap10": lambda: CartFirstPolicy("cf-v1-cap10", cart_cap=10),
+    "money-v1": lambda: MoneyPolicy("money-v1", alpha=0.5),
+    "money-v1-a03": lambda: MoneyPolicy("money-v1-a03", alpha=0.3),
+    "money-v1-a08": lambda: MoneyPolicy("money-v1-a08", alpha=0.8),
+    "skibidy-v1": lambda: SkibidyPolicy("skibidy-v1"),
+    "skibidy-v1g": lambda: SkibidyPolicy("skibidy-v1g", explore_frac=0.0),
     "ref-global-bestsellers": GlobalBestSellers,
     "ref-lastview-category": LastViewCategoryBestSellers,
     "ev-v1": lambda: EvidencePolicy("ev-v1"),
@@ -31,7 +39,6 @@ FACTORIES = {
     "lgbm-live": lambda: LgbmPolicy("lgbm-live", "cache/lgbm_live_20261114T1425.txt"),
     # v3-aff: user category affinity drives discovery items (top feature of the live ranker)
     "ev-v3-aff": lambda: EvidencePolicy("ev-v3-aff", bought_factor=0.02, covis_gain=0.0, affinity_gain=4.0, rel={"user_viewed": 2.5, "same_cat": 0.25, "same_sub": 0.25}),
-    "ev-v2-nocovis": lambda: EvidencePolicy("ev-v2-nocovis", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0),
 }
 FACTORIES.update(VARIANTS)
 
@@ -40,7 +47,3 @@ def get_policy(name: str):
     if name not in FACTORIES:
         raise KeyError(f"unknown policy {name}; known: {sorted(FACTORIES)}")
     return FACTORIES[name]()
-
-# experiment-shard variants (datathon-d1)
-from .variants import VARIANTS  # noqa: E402
-FACTORIES.update(VARIANTS)
