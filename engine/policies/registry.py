@@ -21,6 +21,8 @@ FACTORIES = {
     # v3-aff: user category affinity drives discovery items (top feature of the live ranker)
     "ev-v3-aff": lambda: EvidencePolicy("ev-v3-aff", bought_factor=0.02, covis_gain=0.0, affinity_gain=4.0, rel={"user_viewed": 2.5, "same_cat": 0.25, "same_sub": 0.25}),
     "ev-v2-nocovis": lambda: EvidencePolicy("ev-v2-nocovis", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0),
+    # Experiment only. Loads cache/new_product_neighbors.json produced by scripts/build_embeddings.py.
+    "ev-v2-cold": lambda: EvidencePolicy("ev-v2-cold", bought_factor=0.02, rel={"user_viewed": 1.5}, covis_gain=0.0, content_neighbors=True),
 }
 
 
