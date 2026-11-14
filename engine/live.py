@@ -25,6 +25,7 @@ from .config import LOGS
 from .policies.base import K, fill
 from .policies.evidence import attach_sub_quality
 from .rt import RawTree
+from .cartstate import attach_user_carts, refresh_user_carts
 from .snapshot import Snapshot, apply_delta, build_snapshot, latest_cached, load_products, load_stats, save_live, _rank_lists
 from .policies.prepare import prepare_snapshot
 from .types import Request, parse_ts, sql_ts
@@ -122,8 +123,16 @@ class LiveRunner:
             save_live(snap)
         attach_sub_quality(snap)
         prepare_snapshot(snap)
+        try:
+            attach_user_carts(rt, snap)  # carted-not-bought state for cart-first policies; others ignore it
+        except Exception as e:
+            log.warning("user_cart not attached, cart-first policies fall back to fill: %s", str(e)[:200])
+            snap.user_cart = {}
+        self.cart_since = snap.T - timedelta(seconds=30)
         if self.snap is not None:
             snap.recent_user_buys = self.snap.recent_user_buys
+            if not snap.user_cart:
+                snap.user_cart = getattr(self.snap, "user_cart", {})
         # The snapshot holds the catalogue as of snap.T; replay updates since then before publishing it.
         with self.lock:
             self.last_update_ts = snap.T - timedelta(minutes=5)
@@ -283,6 +292,16 @@ class LiveRunner:
                 log.warning("stock refresh failed: %s", str(e)[:200])
             self.stop.wait(STOCK_EVERY)
 
+    def carts(self) -> None:
+        """Every ~1.5 s fold new add_to_cart / purchase events into snap.user_cart (carts leave on purchase)."""
+        rt = RawTree(timeout=10)
+        while not self.stop.is_set():
+            try:
+                self.cart_since = refresh_user_carts(rt, self.snap, self.cart_since)
+            except Exception as e:
+                log.warning("cart refresh failed: %s", str(e)[:200])
+            self.stop.wait(1.5)
+
     def refresher(self) -> None:
         rt = RawTree(timeout=60)
         last_fast = time.time()
@@ -361,7 +380,7 @@ class LiveRunner:
         self.build()
         self.takeover()
         threads = [threading.Thread(target=t, name=t.__name__, daemon=True)
-                   for t in (self.pusher, self.stock, self.refresher, self.rebuilder, self.reporter)]
+                   for t in (self.pusher, self.stock, self.carts, self.refresher, self.rebuilder, self.reporter)]
         threads += [threading.Thread(target=self.poller, args=(i * POLL_SLEEP / N_POLLERS,), name=f"poller{i}", daemon=True)
                     for i in range(N_POLLERS)]
         self.watermark = datetime.now(timezone.utc) - timedelta(seconds=3)
