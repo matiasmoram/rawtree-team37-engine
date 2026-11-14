@@ -108,6 +108,10 @@ class LiveRunner:
         self.lock = threading.Lock()
         self.clock_offset = 0.93  # server clock minus local clock (measured ~+0.93s at 14:48); refreshed, seconds (deadlines use the server clock)
         self.seen_lock = threading.Lock()
+        # ThreadPoolExecutor's default work queue is unbounded. Without admission
+        # control, a DNS outage can build a queue of HTTP tasks that cannot beat
+        # RawTree's three-second deadline even after networking recovers.
+        self.push_slots = threading.BoundedSemaphore(PUSH_WORKERS)
         self.cart_since: datetime | None = None
 
     def measure_offset(self, rt: RawTree) -> None:
@@ -373,26 +377,53 @@ class LiveRunner:
                 for item in batch:  # transport error: back to the outbox, the collector drops it once too late
                     self.outbox.put(item)
 
+    def _send_bounded(self, batch: list) -> None:
+        """Execute one admitted HTTP batch, always returning its semaphore slot."""
+        try:
+            self._send(batch)
+        finally:
+            self.push_slots.release()
+
     def pusher(self) -> None:
         self._tls = threading.local()
         pool = ThreadPoolExecutor(max_workers=PUSH_WORKERS, thread_name_prefix="push")
-        while not self.stop.is_set():
-            pending = []
-            while True:
-                try:
-                    pending.append(self.outbox.get_nowait())
-                except queue.Empty:
-                    break
-            if pending:
-                now = time.time() + self.clock_offset
-                batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE - 0.2]
-                self.stats["late"] += len(pending) - len(batch)
-                if batch:
-                    snap = self.snap
-                    for _, rec in batch:
-                        rec["items"] = self.valid_items(rec["items"], snap)
-                    pool.submit(self._send, batch)
-            time.sleep(PUSH_EVERY)
+        try:
+            while not self.stop.is_set():
+                pending = []
+                while True:
+                    try:
+                        pending.append(self.outbox.get_nowait())
+                    except queue.Empty:
+                        break
+                if pending:
+                    now = time.time() + self.clock_offset
+                    batch = [(req, rec) for req, rec in pending if now - req.ts.timestamp() < DEADLINE - 0.2]
+                    self.stats["late"] += len(pending) - len(batch)
+                    if batch:
+                        if self.push_slots.acquire(blocking=False):
+                            try:
+                                snap = self.snap
+                                for _, rec in batch:
+                                    rec["items"] = self.valid_items(rec["items"], snap)
+                                pool.submit(self._send_bounded, batch)
+                            except Exception:
+                                # A failed executor submit must not strand capacity or records.
+                                self.push_slots.release()
+                                for entry in batch:
+                                    self.outbox.put(entry)
+                                raise
+                        else:
+                            # Workers are saturated. Do not queue a stale HTTP call
+                            # behind them: retry in the next cycle while the deadline
+                            # still permits, and expire stale rows in the normal filter.
+                            self.stats["push_saturated"] = self.stats.get("push_saturated", 0) + 1
+                            for entry in batch:
+                                self.outbox.put(entry)
+                time.sleep(PUSH_EVERY)
+        finally:
+            # Avoid indefinitely queued executor futures at shutdown: at most
+            # PUSH_WORKERS tasks can be active after the admission guard above.
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def stock(self) -> None:
         rt = RawTree(timeout=10)
