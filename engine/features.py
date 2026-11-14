@@ -105,7 +105,7 @@ def build_context(req: Request, snap: Snapshot, max_views: int = 6, covis_views:
         covis_vb=dict(covis_vb), covis_vv=dict(covis_vv), covis_vb_rank=vb_rank,
         ubuy=snap.user_buy.get(user, {}), uview=snap.user_view.get(user, {}),
         usub=usub, ucat=ucat, usub_total=sum(usub.values()) or 1.0, ucat_total=sum(ucat.values()) or 1.0,
-        uprice=snap.user_price.get(user), recent_buys=snap.recent_user_buys.get(user, set()),
+        uprice=snap.user_price.get(user), recent_buys=getattr(snap, "recent_user_buys", {}).get(user, set()),
     )
 
 

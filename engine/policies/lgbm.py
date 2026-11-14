@@ -21,17 +21,30 @@ _BOUGHT_EVENT = FIDX["bought_in_event"]
 
 
 class LgbmPolicy:
-    def __init__(self, name: str, model_path: str, bought_penalty: float = 3.0, pool: int = 3 * K) -> None:
+    def __init__(self, name: str, model_path: str, bought_penalty: float = 3.0, pool: int = 3 * K,
+                 num_threads: int = 4) -> None:
         """``model_path``: LightGBM text model (relative paths resolve against the project root); its JSON sidecar
-        (same stem) selects the serving score (click, purchase or factored click * P(purchase | click))."""
+        (same stem) selects the serving score (click, purchase or factored click * P(purchase | click)).
+        ``num_threads``: LightGBM threads per predict (see ServingModel)."""
         self.name = name
-        self.model = ServingModel(model_path)
+        self.model = ServingModel(model_path, num_threads=num_threads)
         self.bought_penalty = float(bought_penalty)
         self.pool = pool
 
+    @staticmethod
+    def _ensure_ready(snap: Snapshot) -> None:
+        """Derived tables the features need. Computed here only when missing: the live runner keeps them fresh
+        (refresher: sub_quality every minute; rebuilder: prepare_snapshot), so no request pays for a recompute
+        each time the item counters are swapped. Snapshots pickled by an older Snapshot class lack
+        ``recent_user_buys`` until the live refresher first sets it; build_context reads it unguarded."""
+        if getattr(snap, "sub_price", None) is None or not getattr(snap, "sub_quality", None):
+            prepare_snapshot(snap)
+        if not hasattr(snap, "recent_user_buys"):
+            snap.recent_user_buys = {}
+
     def score_candidates(self, req: Request, snap: Snapshot) -> tuple[list[str], np.ndarray, np.ndarray]:
         """Candidates, their feature rows (slot 0) and final scores (bought penalty applied)."""
-        prepare_snapshot(snap)
+        self._ensure_ready(snap)
         ctx = build_context(req, snap)
         cands = generate_candidates(ctx, snap)
         if not cands:

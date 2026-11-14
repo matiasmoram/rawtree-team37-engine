@@ -108,7 +108,7 @@ def main() -> None:
     print(f"model {policy.model.path.name} kind={policy.model.kind}")
     t = time.perf_counter()
     prepare_snapshot(snap)
-    print(f"prepare_snapshot (once per stats refresh): {1000 * (time.perf_counter() - t):.1f} ms")
+    print(f"prepare_snapshot (one-off; the live runner keeps these tables fresh): {1000 * (time.perf_counter() - t):.1f} ms")
     policy.recommend(reqs[0], snap)  # warm-up (LightGBM first call)
 
     def timed(pol):

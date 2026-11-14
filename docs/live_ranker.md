@@ -150,7 +150,19 @@ at slot 0:
 
 - `bought_in_event` covers 1 746 rows with 7 clicks and 1 purchase, and most of these rows are also
   `user_bought_n > 0`. The policy therefore applies its own bought penalty to both signals (§5).
-- Position curve: the same rows are scored at every slot. POSITION_CURVE
+- Position curve: the same rows are scored at every slot, as P(slot k) / P(slot 1). It is non-increasing by
+  construction.
+
+  | | k=1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | click model | 1.00 | 0.55 | 0.52 | 0.37 | 0.37 | 0.34 | 0.30 | 0.30 | 0.30 | 0.30 |
+  | purchase model | 1.00 | 0.65 | 0.57 | 0.43 | 0.42 | 0.32 | 0.21 | 0.21 | 0.19 | 0.19 |
+  | raw CTR (train) | 1.00 | 0.39 | 0.37 | 0.19 | 0.27 | 0.22 | 0.16 | 0.12 | 0.18 | 0.18 |
+
+  The raw curve is steeper because policies put their best items first. The model attributes part of the slot-1
+  advantage to the items themselves.
+- The P(purchase | click) logistic regression has its largest coefficients (per sd) on `user_cat_share` +0.26,
+  `is_new_user` +0.20, `q_organic` +0.12, `user_days_since_view` -0.12 and `slot` -0.11.
 
 Score at slot 0 by relation, final served model, all rows. `slot1` is the share of that relation's exposures
 that were in slot 1.
@@ -169,9 +181,10 @@ that were in slot 1.
 The order is sensible: bought items are last, and history views and session views are on top. Two
 qualifications apply:
 
-- **Session views rest on very little data.** Before the 13:44-13:51 switch to the ev policies, the old policies
-  almost never showed them: 163 exposures of `viewed_*` items in the first 75 % of the data. All of what the
-  model knows about them comes from about 5 000 exposures and 15 purchases.
+- **Session views rest on very little data.** Until the switch to `t37-ev-v1` at about 13:45, the old policies
+  almost never showed them. The train slice has only 361 session-view exposures, with 4 clicks and 4
+  purchases. All of what the model knows about them comes from 5 299 exposures and 15 purchases, most of them
+  in the last 35 min.
 - **`same_cat` at slot 0 is an extrapolation.** Only 4 % of `same_cat` exposures were in slot 1, so its slot-0
   score depends on the position model.
 
@@ -183,17 +196,59 @@ qualifications apply:
 2. Featurize at slot 0 and score all candidates in one vectorised `predict`.
 3. Apply the bought penalty and take the top 10 through `fill`.
 
-The model is loaded once, and `predict` sits behind a lock, so pollers can share it across threads.
+The model is loaded once. `predict` uses 4 LightGBM threads and sits behind a lock, so pollers can share it
+across threads. Single-threaded `predict` costs about 50 µs per row with about 500 trees, which is 6-7 ms for 120
+candidates; 4 threads bring that to about 2 ms.
 
 **Bought items.** These are items in the user's history (`user_bought_n > 0`) or bought during the event
 (`bought_in_event`). Their score is divided by `bought_penalty`. A bought item therefore enters the list only
 when the model scores it at least 3x the non-bought item it would displace. Use `bought_penalty=float("inf")`
 for a hard exclusion.
 
-`prepare_snapshot` adds `sub_price`, which the live runner does not attach on its own. Without it,
-`log_price_vs_sub` would be 0 at serving and differ from training.
+**Derived tables.** The policy runs `prepare_snapshot` only when `sub_price` or `sub_quality` is missing. The
+live runner keeps both fresh (refresher and rebuilder), so no request pays the 20 ms recompute each time the item
+counters are swapped. The policy also sets `recent_user_buys = {}` if the attribute is missing. Snapshots pickled
+by an older `Snapshot` class lack it, for example `snapshot_20261114T133818.pkl`, and `build_context` reads it
+without a guard.
 
-Live check: LIVE_CHECK
+### Live check (`python -m engine.learn.live_check --model cache/lgbm_live_20261114T1425.txt --n 300`)
+
+Setup: 300 live requests from 14:45:30 to 14:47:10. User tables come from `live_snapshot.pkl` (T=14:44:41).
+Catalogue and item counters are current, and recent purchases are loaded from `RECENT_BUYS_SQL`. Lists are not
+submitted.
+
+**Latency per `recommend`.**
+- lgbm: p50 8.2 ms, p95 14.1 ms, max 19.1 ms, with 123 candidates at p50 and 204 at most.
+- ev-v2 on the same requests: p50 2.7 ms.
+- The machine was shared with the live runner. In an idle moment, lgbm measured p50 4.8 ms and p95 6.5 ms. In a
+  heavily loaded moment it measured p95 84 ms, while ev-v2 slowed 4x too.
+
+| share | lgbm | ev-v2 |
+|---|---|---|
+| slot-1 item is a session view | 0.067 (0.082 of requests with views) | 0.080 (0.099) |
+| slot-1 item is the last view | 0.017 | 0.043 |
+| slot-1 item viewed by the user before (history) | 0.407 | 0.800 |
+| slot-1 item bought before | 0.000 | 0.000 |
+| all items: session views | 0.027 | 0.111 |
+| all items: bought before | 0.001 | 0.003 |
+| all items: user viewed before | 0.191 | 0.601 |
+
+Exclusive relation of the slot-1 item:
+
+| policy | user_viewed | same_cat | other | other_home | same_sub | viewed_earlier | viewed_last |
+|---|---|---|---|---|---|---|---|
+| lgbm | 0.40 | 0.19 | 0.18 | 0.09 | 0.07 | 0.05 | 0.02 |
+| ev-v2 | 0.80 | 0.01 | 0.00 | 0.00 | 0.11 | 0.04 | 0.04 |
+
+Overlap with ev-v2 is 31 % of the top-10 items and 30 % of slot-1 items.
+
+The learned ranker is much more exploratory than ev-v2:
+- About 27 % of its slot-1 items are unrelated to the session. Live attribution puts unrelated items at
+  0.03-0.05 % per shown item.
+- It shows half as many history views as ev-v2.
+
+These choices rest on the extrapolations described in §4. **Run it as a minority arm (10-20 %) and compare arms
+on live feedback before giving it more traffic.**
 
 ## 6. Retraining every hour
 
@@ -206,7 +261,7 @@ Live check: LIVE_CHECK
   Every 3 h, build a new snapshot in the background (`python scripts/build_snapshot.py 2026-11-14T15:10:00`),
   then move `--since` to it.
 - **Default `--until`.** It is now minus 2 min, because feedback lands about 4 s after each request. The run
-  takes about 7 min, mostly the 24 LightGBM fits.
+  takes 5-7 min, mostly the 24 LightGBM fits.
 
 **Promotion gate.** Check these against the JSON sidecar before a new model goes live:
 1. The sanity checks are OK: bought negative, session views and history views positive, position curve
@@ -231,7 +286,7 @@ restart `scripts/run_live.py`; the takeover handoff avoids a gap. Alternatively,
 - **Small purchase counts.** There are 198 purchases in total and 44 in validation. Purchase metrics have CIs of
   about ±0.1 NDCG, and the two runs above disagree in sign. The factored model leans on clicks (636) for exactly
   this reason. Do not tune on purchase metrics alone.
-- **Non-stationarity.** The policy mix changed at about 13:50: training data came mostly from the old policy,
+- **Non-stationarity.** The policy mix changed at about 13:45 (`content-session-popularity-v1` to `t37-ev-v1`): training data came mostly from the old policy,
   validation data from the ev policies. Validation is therefore partly an off-policy test. The simulator,
   catalogue (about 1 500 updates in 2 h) and traffic mix can drift too. An hourly retrain on a rolling window is
   the mitigation.

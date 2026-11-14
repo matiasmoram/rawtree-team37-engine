@@ -43,7 +43,10 @@ def resolve(path: str | Path) -> Path:
 class ServingModel:
     """Booster + sidecar, loaded once. ``score`` is thread-safe and expects rows in ``FEATURES`` order."""
 
-    def __init__(self, model_path: str | Path) -> None:
+    def __init__(self, model_path: str | Path, num_threads: int = 4) -> None:
+        """``num_threads``: OpenMP threads per predict. Single-threaded LightGBM costs ~50 us per row with ~500
+        trees (6-7 ms for 120 candidates); 4 threads bring it to ~2 ms. Calls are serialised by a lock."""
+        self.num_threads = num_threads
         self.path = resolve(model_path)
         self.booster = lgb.Booster(model_file=str(self.path))
         names = self.booster.feature_name()
@@ -58,7 +61,7 @@ class ServingModel:
 
     def score(self, X: np.ndarray) -> np.ndarray:
         with self._lock:
-            p = self.booster.predict(X, num_threads=1)
+            p = self.booster.predict(X, num_threads=self.num_threads)
         if self.kind == "factored":
             p = p * pc_predict(self.pc, X)
         return p
