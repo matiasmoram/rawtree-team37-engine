@@ -52,7 +52,8 @@ META_COLS = ["request_id", "ts", "user_id", "pid", "click", "purchase", "served_
 FEEDBACK_SQL = """
 SELECT f.rid AS request_id, f.shown_items AS shown, f.clk AS clicked, f.pur AS purchased, f.sb AS served_by,
        f.fr AS fallback_reason, r.rts AS ts, r.uid AS user_id, r.new_user AS is_new_user, r.pg AS page,
-       r.dev AS device, r.reg AS region, r.views AS recent_views, ifNull(s.mv, '') AS model_version
+       r.dev AS device, r.reg AS region, r.views AS recent_views,
+       if(f.sb != 'team', '', if(s.mv = '', '(unmatched)', s.mv)) AS model_version
 FROM (SELECT request_id::String AS rid, shown::Array(String) AS shown_items,
              ifNull(clicked::Nullable(String), '') AS clk, ifNull(purchased::Nullable(String), '') AS pur,
              served_by::String AS sb, ifNull(fallback_reason::Nullable(String), '') AS fr
@@ -65,8 +66,11 @@ INNER JOIN (SELECT request_id::String AS rid, ts::DateTime64(3) AS rts, user_id:
             FROM shop.requests
             WHERE ts::DateTime64(3) >= '{lo}' AND ts::DateTime64(3) < '{hi}'
               AND cityHash64(request_id::String) % {parts} = {part}) AS r ON r.rid = f.rid
-LEFT JOIN (SELECT request_id::String AS rid, any(model_version::String) AS mv FROM {team}.submissions
-           WHERE cityHash64(request_id::String) % {parts} = {part} GROUP BY rid) AS s ON s.rid = f.rid
+LEFT JOIN (SELECT request_id::String AS rid, items::Array(String) AS sent_items,
+                  if(uniqExact(model_version::String) = 1, any(model_version::String), '(ambiguous)') AS mv
+           FROM {team}.submissions
+           WHERE cityHash64(request_id::String) % {parts} = {part} GROUP BY rid, sent_items) AS s
+           ON s.rid = f.rid AND s.sent_items = f.shown_items
 SETTINGS max_execution_time = 300"""
 
 # Purchases that the live system would know as "recent buys" at request time (see engine.live.RECENT_BUYS_SQL),

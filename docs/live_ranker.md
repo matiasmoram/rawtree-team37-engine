@@ -14,7 +14,10 @@ One row per item the shopper actually saw (`feedback.shown`, 10 per request), la
 - `team_37.feedback`, excluding `__init__`. Both `served_by='team'` and `served_by='fallback'` rows are used.
   The label is defined on `shown`, so a fallback row is a valid labelled exposure of the fallback list.
 - `shop.requests`, to rebuild the `Request` (user, context, `recent_views`).
-- `team_37.submissions`, for `any(model_version)` per request.
+- `team_37.submissions`, matched on both request ID and the ordered `items` list against `feedback.shown`.
+  If different versions submitted the same shown list, the attribution is `(ambiguous)`; unmatched team lists
+  are `(unmatched)`, and fallback exposures have no credited model. Historical exports made before this fix
+  used `any(model_version)` by request and may misattribute feedback when multiple emitters overlapped.
 
 Features are exactly the serving features: `engine.features.featurize(ctx, snap, shown, slots=[0..9])`.
 `slot` is a feature, so position bias is absorbed during training. Serving scores every candidate at `slot=0`.

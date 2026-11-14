@@ -51,14 +51,16 @@ MODEL_FIELDS = [
 ]
 
 FEEDBACK_SQL = """
-SELECT s.mv AS model_version, count() AS requests,
+SELECT if(f.sb != 'team', '', if(s.mv = '', '(unmatched)', s.mv)) AS model_version, count() AS requests,
        countIf(f.sb = 'team') AS served_team, countIf(f.fr = 'late') AS late, countIf(f.fr = 'invalid') AS invalid, countIf(f.fr = 'missing') AS missing,
        countIf(f.clk != '') AS clicks, countIf(f.pur != '') AS purchases, sum(f.rev) AS revenue,
        quantile(0.5)(f.lat) AS p50_ms, quantile(0.95)(f.lat) AS p95_ms
 FROM (SELECT request_id::String AS rid, served_by::String AS sb, fallback_reason::String AS fr, clicked::String AS clk, purchased::String AS pur,
-             revenue_eur::Float64 AS rev, latency_ms::Float64 AS lat FROM {team}.feedback
+             revenue_eur::Float64 AS rev, latency_ms::Float64 AS lat, shown::Array(String) AS shown_items FROM {team}.feedback
       WHERE request_id::String != '__init__' AND ts::DateTime64(3) > now() - INTERVAL {minutes} MINUTE) AS f
-LEFT JOIN (SELECT request_id::String AS rid, any(model_version::String) AS mv FROM {team}.submissions GROUP BY rid) AS s ON s.rid = f.rid
+LEFT JOIN (SELECT request_id::String AS rid, items::Array(String) AS sent_items,
+                  if(uniqExact(model_version::String) = 1, any(model_version::String), '(ambiguous)') AS mv
+           FROM {team}.submissions GROUP BY rid, sent_items) AS s ON s.rid = f.rid AND s.sent_items = f.shown_items
 GROUP BY model_version ORDER BY requests DESC
 """
 

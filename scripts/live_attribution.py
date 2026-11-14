@@ -23,7 +23,9 @@ FROM (SELECT request_id::String AS rid, shown::Array(String) AS shown, ifNull(cl
       FROM {TEAM}.feedback WHERE ts::DateTime64(3) > '{a.since}' AND served_by::String = 'team') AS f
 INNER JOIN (SELECT request_id::String AS rid, ts::DateTime64(3) AS ts, user_id::String AS user_id, is_new_user::Bool AS is_new_user, context.page::String AS page,
             context.device::String AS device, context.region::String AS region, recent_views FROM shop.requests WHERE ts::DateTime64(3) > toDateTime64('{a.since}', 3) - INTERVAL 1 MINUTE) AS r ON r.rid = f.rid
-LEFT JOIN (SELECT request_id::String AS rid, any(model_version::String) AS mv FROM {TEAM}.submissions GROUP BY rid) AS s ON s.rid = f.rid
+LEFT JOIN (SELECT request_id::String AS rid, items::Array(String) AS sent_items,
+                  if(uniqExact(model_version::String) = 1, any(model_version::String), '(ambiguous)') AS mv
+           FROM {TEAM}.submissions GROUP BY rid, sent_items) AS s ON s.rid = f.rid AND s.sent_items = f.shown
 WHERE 1 {mv_filter}
 SETTINGS max_execution_time = 120""", timeout=150)
 agg = defaultdict(lambda: [0, 0, 0]); slot_agg = defaultdict(lambda: [0, 0, 0])
