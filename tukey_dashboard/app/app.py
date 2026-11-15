@@ -55,13 +55,15 @@ def vega(id_, make):
     return ui.HTML(f'<div id="c-{id_}" class="tk-chart" role="img"></div><script>TK.embed("{id_}", {spec});</script>')
 
 
-def head(title, sub, how):
-    """Card header: the takeaway (title), what is encoded (one line), and the long explanation on demand (ⓘ)."""
+def head(title, takeaway, enc, how=""):
+    """Card header. Title = what the chart shows (variables, unit, period: "a title on the graph", VI course);
+    takeaway = the message in one line (explanatory vis); the encoding and the long explanation on demand (ⓘ)."""
+    pop = ui.TagList(ui.p(ui.strong("Com es llegeix. "), enc, class_="tk-pop"), ui.p(how, class_="tk-pop") if how else None)
     return ui.div(
         ui.div(ui.span(title, class_="tk-title"),
-               ui.popover(ui.tags.button("i", class_="tk-info", **{"aria-label": "Com es llegeix"}),
-                          ui.p(how, class_="tk-pop"), title="Com es llegeix", placement="left")),
-        ui.div(sub, class_="tk-sub"))
+               ui.popover(ui.tags.button("i", class_="tk-info", **{"aria-label": "Com es llegeix"}), pop,
+                          title="Com es llegeix", placement="left")),
+        ui.div(takeaway, class_="tk-take") if takeaway else None)
 
 
 def card(h, c):
@@ -286,15 +288,21 @@ def server(input, output, session):
     def h1():
         if is_final():
             f = F()
-            return head(f"De {R.pct(f['prac_served'], 0)} a {R.pct(f['served_total'], 3)} de respostes a temps",
-                        "Cada marca és una finestra de 10 minuts · caixa de Tukey de la pràctica",
+            return head("Respostes a temps per finestra de 10 minuts: pràctica vs final",
+                        f"De {R.pct(f['prac_served'], 1)} a la pràctica a {R.pct(f['served_total'], 3)} a la final: cap "
+                        "finestra per sota de l'objectiu del 98 %.",
+                        "Cada punt és una finestra de 10 minuts; la caixa grisa és el resum de Tukey de la pràctica "
+                        "(frontisses, mediana i bigotis fins a 1,5·H); la línia discontínua blava, l'objectiu del 98 %.",
                         f"Pràctica: el {R.pct(f['prac_below95'], 0)} de les finestres van quedar per sota del 95 % (frontissa inferior "
                         f"{R.pct(f['prac_box']['h1'], 0)}). Final: cap de les {f['n_windows']} per sota del 98 % (mínim "
                         f"{R.pct(f['final_box']['min'], 1)}). Una resposta tardana compta com a no resposta, igual que a l'on-time "
                         "oficial. Font: team_37.feedback.")
         n = N()
-        return head("La fiabilitat ens enfonsava, no el model",
-                    f"Cada punt és un equip a {n['sel_label']} · dreta = respon a temps · amunt = ven més quan respon",
+        return head(f"Qualitat del model vs respostes a temps, tots els equips ({n['sel_label']})",
+                    f"Amb el mateix model vam ser #{n['best_rank']} responent-ho tot i #{n['worst_rank']} amb el "
+                    f"{R.pct(n['worst_s'], 0)} a temps: el que ens feia caure era la fiabilitat.",
+                    "Cada punt és un equip. Eix horitzontal: % de peticions respostes a temps. Eix vertical: compres per 100 "
+                    "peticions quan el model respon.",
                     f"Blau ple: team_37 ara (#{n['best_rank'] if n['sel_rank'] == n['best_rank'] else n['sel_rank']}); blau buit: el "
                     f"mateix model a {n['worst_label']}, quan només responia el {R.pct(n['worst_s'], 0)} (#{n['worst_rank']}). La "
                     "fletxa és el que hauríem guanyat responent-ho tot. Eix vertical: compres per 100 descomptant les respostes "
@@ -313,18 +321,24 @@ def server(input, output, session):
         if is_final() and F().get("field_final"):
             f = F()
             top = f["field_final"][:5]
-            return head(f"#{f['sel_rank']} de {f['n_teams']} en conversió: ara ens separa el model",
-                        "Mètrica oficial de tota la final · cada punt és un equip",
+            return head("Compres esperades per 100 vs respostes a temps, els 42 equips a la final",
+                        f"Som #{f['sel_rank']} de {f['n_teams']} en conversió ({R.f(f['sel_conv'], 2)}); gairebé tots els equips "
+                        "responen ~100 %, ara la diferència és el model.",
+                        "Cada punt és un equip; mètrica oficial de l'API per a tota la final (10:00–12:00). Línies discontínues: "
+                        "referència i baseline de l'organització.",
                         f"{R.f(f['sel_conv'], 2)} compres esperades per 100 peticions, a {R.f(f['top_conv'] - f['sel_conv'], 2)} del "
                         f"primer i a {R.f(f['sel_conv'] - f['ref_conv'], 2, sign=True)} de la referència. Gairebé tots els equips "
                         "forts responen ~100 % a temps: a la pràctica ens moviem en horitzontal (fiabilitat), aquí ja no. Primers "
                         "cinc en conversió: " + ", ".join(f"{r['team']} {R.f(r['conv'], 2)}" for r in top) + ".")
         if is_final():
-            return head("La latència no ha canviat", "Latència p95 per hora · pràctica vs final",
-                        "La millora ve d'un sol writer estable, no d'anar més ràpid.")
+            return head("Latència p95 per hora: pràctica vs final", "La latència no ha canviat: la millora ve d'un sol "
+                        "writer estable, no d'anar més ràpid.", "Cada punt és una hora; caixa de mínim a màxim.")
         n = N()
-        return head(f"Una caiguda del writer: {R.f(n['gain_worst'], 0)} punts perduts en una hora",
-                    "% de respostes a temps per finestra de 15 min · gris: mediana del top-6",
+        return head("Respostes a temps de team_37 per finestra de 15 minuts, pràctica",
+                    f"La caiguda del writer de dg 01h ens va costar {R.f(n['gain_worst'], 0)} punts en una hora; el top-6 "
+                    "es manté a prop del 100 %.",
+                    "Línia blava: team_37; línia grisa: mediana dels sis primers equips de cada finestra; discontínua: "
+                    "objectiu del 98 %.",
                     f"Mediana horària {R.pct(n['box_team_37']['med'], 0)} (frontisses {R.f(n['box_team_37']['h1'], 0)}–"
                     f"{R.f(n['box_team_37']['h2'], 0)}) contra {R.f(n['box_top-6']['h1'], 0)}–{R.f(n['box_top-6']['h2'], 0)} % "
                     "del top-6. Una petició no resposta a temps rep la llista per defecte de l'organització. Arrossega a la "
@@ -345,18 +359,23 @@ def server(input, output, session):
             f = F()
             rf, rp = f.get("real"), f.get("real_prac_live")
             if not (rf and rp):
-                return head("Compres reals de la versió servida", "", "Sense dades.")
-            return head("El model ven el que prometia",
-                        "Compres reals per 100 peticions · interval del 95 %",
+                return head("Compres reals per 100 peticions de la versió servida", "", "Sense dades.")
+            return head("Compres reals per 100 peticions amb interval del 95 %: final vs pràctica",
+                        f"{f['live']} fa {R.f(rf['rate'], 2)} a la final i {R.f(rp['rate'], 2)} a la pràctica: els intervals "
+                        "se solapen, el model ven el que prometia.",
+                        "Punt = compres reals per 100 peticions; línia = interval del 95 % (Poisson exacte). Blau: la final; "
+                        "gris: la pràctica.",
                         f"{f['live']}: {R.f(rf['rate'], 2)} a la final contra {R.f(rp['rate'], 2)} a la pràctica; els intervals se "
                         "solapen. Blau: la final; gris: la pràctica (la mateixa versió, l'anterior i la llista baseline). Són "
                         f"compres reals, amb sort; la mètrica oficial (sense sort) dona q {R.f(f.get('live_med'), 0)}, per sota del "
                         "que esperàvem, però la referència també va caure: la final era més difícil.")
         n = N()
         tie = n["comp"].get("fz-v10-nocorr")
-        title = ("fz-v9a i fz-v10-nocorr empaten; la resta, per sota" if tie and tie.get("paired")
-                 else f"{n['live']} és la millor versió")
-        return head(title, "Compres per 100 sobre la referència, per finestra de 15 min · caixa de Tukey",
+        take = (f"fz-v9a i fz-v10-nocorr empaten (diferència {R.f(tie['dconv'], 2, sign=True)}); la resta de versions "
+                "queden per sota de la referència." if tie and tie.get("paired") else f"{n['live']} és la millor versió.")
+        return head("Compres per 100 de cada versió respecte a la referència, per finestra de 15 minuts", take,
+                    "Cada caixa resumeix les finestres de 15 minuts d'una versió (frontisses, mediana, bigotis fins a 1,5·H; "
+                    "punts = valors fora de les tanques). 0 = igual que la referència de l'organització a la mateixa finestra.",
                     (f"Diferència aparellada fz-v9a − nocorr: {R.f(tie['dconv'], 2, sign=True)} compres/100 en {tie['k']} "
                      "finestres compartides, dins del soroll. " if tie and tie.get("paired") else "")
                     + f"Un 50/50 durant les 2 h de la final només veuria diferències ≥ {R.f(n['mde_e'], 2)}: per això es va "
@@ -373,14 +392,18 @@ def server(input, output, session):
     def h4():
         if is_final():
             f = F()
-            return head("El patró de la posició 1 es repeteix",
-                        "Compres per 1.000 vegades al slot 1 · marca: pràctica · punt: final (interval del 95 %)",
+            return head("Compres per 1.000 impressions al slot 1, per relació amb el comprador: pràctica vs final",
+                        f"El patró es repeteix: els productes vistos a la sessió continuen a dalt, i els ja comprats ocupen "
+                        f"només l'{R.pct(f.get('bb_all'), 1)} dels slots.",
+                        "Marca negra: la pràctica; punt blau amb línia: la final amb interval del 95 %.",
                         f"El slot 1 fa el {R.pct(f.get('slot1_share'), 0)} de les compres (predicció ≥ 35 %) i els productes ja "
                         f"comprats ocupen l'{R.pct(f.get('bb_all'), 1)} dels slots (≤ 1,5 %). Si el punt cau sobre la marca o la "
                         "supera, la regla apresa a la pràctica es manté amb dades noves.")
         n = N()
-        return head(f"La posició 1 decideix: {R.pct(n['slot1_share'], 0)} de les compres",
-                    "Compres per 1.000 vegades al slot 1, segons la relació del producte amb el comprador",
+        return head("Compres per 1.000 impressions al slot 1, segons la relació del producte amb el comprador",
+                    f"El slot 1 fa el {R.pct(n['slot1_share'], 0)} de les compres: hi venen els productes vistos a la sessió, "
+                    "i els ja comprats gairebé gens.",
+                    "Una barra per relació, des de zero i ordenades de més a menys; vermelló = posició malgastada.",
                     f"A dalt, productes vistos a la sessió i al carret. Un producte ja comprat gairebé no es ven "
                     f"({R.f(n['bb1'], 1)} per 1.000): per això el vet a recompres (D3). Barres des de zero, ordenades.")
 
@@ -414,7 +437,7 @@ def server(input, output, session):
                        f'<td class="stake">{track}</td><td class="pred">{E(r["pred"])}</td>'
                        f'<td class="oc {cls}" title="{E(detail)}"><b>{g} {word}</b><span>{E(short)}</span></td></tr>')
         return ui.div(
-            ui.div(ui.span("Decisions per a la final", class_="tk-title"),
+            ui.div(ui.span("Decisions per a la final: punts en joc, predicció registrada i resultat", class_="tk-title"),
                    ui.span(f"prediccions registrades {pred()['registered_at_cet']} · sha {pred()['sha256'][:8]}", class_="tk-sub inline"),
                    class_="tk-lhead"),
             ui.HTML('<table class="tk-ledger"><thead><tr><th></th><th>Decisió</th><th>Punts en joc (sobre 100)</th>'

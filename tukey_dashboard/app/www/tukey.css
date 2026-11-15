@@ -130,3 +130,6 @@ body { font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif; color: v
   .tk-h1 { font-size: 22px; }
   .tk-ledger .pred, .tk-ledger th:nth-child(4) { display: none; }
 }
+
+.tk-take { font-size: 13.5px; color: var(--ink2); margin-top: 5px; line-height: 1.4; padding-left: 10px; border-left: 3px solid var(--us); }
+.tk-title { font-size: 15px; }
