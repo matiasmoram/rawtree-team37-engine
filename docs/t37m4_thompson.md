@@ -1,8 +1,7 @@
 # t37-m4 · self-learning Thompson-sampling model
 
-Code: [`t37m4/`](../t37m4/) (self-contained, does not import `engine/`). Full design:
-[`t37m4/docs/2026-11-14-thompson-learner-design.md`](../t37m4/docs/2026-11-14-thompson-learner-design.md);
-implementation plan: [`t37m4/docs/2026-11-14-thompson-learner.md`](../t37m4/docs/2026-11-14-thompson-learner.md).
+Code: `t37m4/`, kept in the git tag `archive-all-experiments-2026-11-15` (not on `main`, see [README](README.md)).
+Full design: [`t37m4_thompson_design.md`](t37m4_thompson_design.md).
 
 ## What it does
 - Predicts P(click at slot) × P(buy | click) with two Bayesian logistic models (Gaussian posterior) plus
