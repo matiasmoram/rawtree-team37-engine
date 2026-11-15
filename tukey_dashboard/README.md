@@ -6,6 +6,10 @@ CONFIRMATÒRIA, a l'estil de Tukey: *visualitzar per descobrir, interpretar i de
 
 **Entregable: dashboard Shiny (Shiny for Python + Altair), una sola vista.**
 
+| Final (confirmatori) | Pràctica (en directe) |
+|---|---|
+| ![Vista Final del tauler](shots/dashboard_final.png) | ![Vista Pràctica del tauler](shots/dashboard_practice.png) |
+
 ```powershell
 cd tukey_dashboard
 python -m venv .venv
