@@ -1,6 +1,6 @@
 # fz_adaptive · team_37 real-time recommender (self-contained)
 
-Serves as `model_version = fz-v9a-xcat1.0`. Everything it needs is in this folder; it shares no code with the rest of the repo.
+Final-round version: `model_version = fz-v10-nocorr` (the v9a model with the online correction switched off). Everything it needs is in this folder; it shares no code with the rest of the repo.
 
 For every shopper request we rank the whole active catalogue (~5,000 products) and answer with the 10 products
 most likely to be **bought**, in about one second.
@@ -83,11 +83,11 @@ Arms listed together ran at the same time on a hash split of requests.
 | Penalty x0.5 on other categories vs. none | 1.84 vs. 2.09 → no penalty |
 | Boost x2.5 on other categories vs. none | 1.86 vs. 2.49 → no boost |
 | Diversity cap (max 2 per subcategory) vs. none | 1.42 vs. 1.85 → no cap |
-| Online correction on vs. off | 2.21 vs. 2.17 → tie, kept on for the final round's changing market |
+| Online correction on vs. off (3 h overnight, 21.6k vs. 10.8k requests) | 2.15 vs. 2.23, cold 2.59 vs. 2.74 → switched off for the final |
 | Live rows up-weighted x4 in retraining vs. history only (offline benchmark) | click AUC 0.83 vs. 0.86 → history only for now |
 
-Final configuration (`fz-v9a-xcat1.0`): 2.25% conversion, 2.88% cold, over 2,657 requests (baseline 0.59%,
-organisers' reference 1.94%).
+Final configuration (`fz-v10-nocorr`): 2.23% conversion, 2.74% cold, over 10,789 requests in the last three
+practice hours (baseline 0.48%, organisers' reference 1.88%); the team was 3rd of 42 on that window.
 
 Reliability: answers are sent with hedged re-sends (an insert in flight for more than 0.7 s is sent again on another
 connection). Late answers came in bursts in which every round trip to the API slowed at once while ranking stayed at
