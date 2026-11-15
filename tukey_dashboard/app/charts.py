@@ -286,3 +286,74 @@ def final_field(N, width="container", height=230):
     rule = alt.Chart(lines).mark_rule(color=REF, strokeDash=[4, 3]).encode(y="conv:Q")
     rt = alt.Chart(lines).mark_text(align="left", x=4, dy=-6, color=REF, fontSize=10.5).encode(y="conv:Q", text="t:N")
     return _cfg(alt.layer(rule, rt, others, us, lab).properties(width=width, height=height))
+
+
+def timeline(D, t0, t1, width="container", height=330, min_req=300, main_req=5000):
+    """Every model version we served, hour by hour: official expected purchases per 100 requests (API, per version).
+    Lines = the versions that carried real traffic (≥ main_req requests in total), labelled at their last hour;
+    grey dots = short trials; black dashed = organisers' reference; grey dashed = baseline; vertical rules = milestones.
+    Hover a line to isolate it (linked highlighting inside the view)."""
+    vh = [v for v in D["versions_hourly"] if t0 <= v["t"] < t1 and v["requests"] >= min_req and v["t"] < D["meta"]["final_start"]]
+    if not vh:
+        return None
+    tot = {}
+    for v in vh:
+        tot[v["version"]] = tot.get(v["version"], 0) + v["requests"]
+    main = [k for k, n in tot.items() if n >= main_req]
+    served = {"fz-v9a-xcat1.0", "fz-v10-nocorr"}                    # what ended up serving: the blue accent
+    ms = lambda t: (t + 3600 + 1800) * 1000                           # CET, middle of the hour
+    rows = [{"tc": ms(v["t"]), "version": v["version"], "conv": v["conv"], "req": v["requests"],
+             "main": v["version"] in main, "blue": v["version"] in served} for v in vh]
+    df = pd.DataFrame(rows)
+    hours = sorted({v["t"] for v in vh})
+    teams = {(r["t"], r["team"]): r for r in D["field_hourly"]}
+    me = [teams.get((t, TEAM)) for t in hours]
+    refs = pd.DataFrame([{"tc": ms(t), "ref": r["reference"], "base": r["baseline"]} for t, r in zip(hours, me) if r])
+
+    x = alt.X("tc:T", title=None, scale=alt.Scale(type="utc", padding=10),
+              axis=alt.Axis(format="%H:%M", tickCount=12, grid=False, labelFlush=False))
+    y = alt.Y("conv:Q", title="Compres esperades per 100 peticions", scale=alt.Scale(domain=[0, 2.6], nice=False),
+              axis=alt.Axis(values=[0, 0.5, 1, 1.5, 2, 2.5]))
+    hover = alt.selection_point(fields=["version"], on="pointerover", clear="pointerout", empty=True)
+    tip = [alt.Tooltip("version:N", title="Versió"), alt.Tooltip("tc:T", title="Hora (CET)", format="%a %H:%M", formatType="utc"),
+           alt.Tooltip("conv:Q", title="Compres/100", format=".2f"), alt.Tooltip("req:Q", title="Peticions", format=",.0f")]
+
+    ref_line = alt.Chart(refs).mark_line(color=REF, strokeDash=[5, 4], strokeWidth=1.4).encode(x=x, y="ref:Q")
+    base_line = alt.Chart(refs).mark_line(color=GREY, strokeDash=[2, 3], strokeWidth=1.2).encode(x=x, y="base:Q")
+    last = refs.iloc[-1]
+    ref_lab = alt.Chart(pd.DataFrame([{"tc": last["tc"], "v": last["ref"], "t": "referència"},
+                                      {"tc": last["tc"], "v": last["base"], "t": "baseline"}])).mark_text(
+        align="left", dx=8, fontSize=11, color=MUTED).encode(x="tc:T", y="v:Q", text="t:N")
+
+    others = alt.Chart(df[~df["main"]]).mark_circle(size=34, color=LIGHT, opacity=0.9).encode(x=x, y=y, tooltip=tip)
+    col = alt.condition("datum.blue", alt.value(US), alt.value("#6d6c66"))
+    op = alt.condition(hover, alt.value(1.0), alt.value(0.18))
+    mdf = df[df["main"]]
+    lines = alt.Chart(mdf).mark_line(strokeWidth=2.2).encode(
+        x=x, y=y, detail="version:N", color=col, opacity=op)
+    pts = alt.Chart(mdf).mark_circle(size=42).encode(x=x, y=y, color=col, opacity=op, tooltip=tip).add_params(hover)
+
+    # direct labels at each main version's last hour, nudged apart so they never overlap (≈ 13 px)
+    ends = mdf.sort_values("tc").groupby("version").tail(1).sort_values("conv")
+    gap, placed = 0.115, []
+    for _, r in ends.iterrows():
+        yv = r["conv"]
+        for p in placed:
+            if abs(p["tc"] - r["tc"]) < 3 * 3600 * 1000 and abs(p["y"] - yv) < gap:
+                yv = p["y"] + gap
+        placed.append({"tc": r["tc"], "y": yv, "conv": r["conv"], "version": r["version"], "blue": r["blue"]})
+    lab = alt.Chart(pd.DataFrame(placed)).mark_text(align="left", dx=7, fontSize=11, fontWeight=600).encode(
+        x="tc:T", y=alt.Y("y:Q", scale=alt.Scale(domain=[0, 2.6])), text="version:N", color=col, opacity=op)
+
+    ev = [e for e in D.get("manual", {}).get("events", {}).get("items", []) if t0 <= e["t"] < min(t1, D["meta"]["final_start"])]
+    evdf = pd.DataFrame([{"tc": (e["t"] + 3600) * 1000, "t": e["label"], "row": i % 2} for i, e in enumerate(ev)])
+    layers = [base_line, ref_line, ref_lab]
+    if not evdf.empty:   # milestone labels on two staggered rows so neighbours never overlap
+        layers += [alt.Chart(evdf).mark_rule(color="#cfcec8", strokeDash=[2, 3]).encode(x="tc:T")]
+        for row, yy in ((0, 4), (1, 19)):
+            sub = evdf[evdf["row"] == row]
+            if not sub.empty:
+                layers.append(alt.Chart(sub).mark_text(align="left", dx=4, y=yy, baseline="top", fontSize=10.5, color=MUTED)
+                              .encode(x="tc:T", text="t:N"))
+    layers += [others, lines, pts, lab]
+    return _cfg(alt.layer(*layers).properties(width=width, height=height))

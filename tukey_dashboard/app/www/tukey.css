@@ -133,3 +133,5 @@ body { font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif; color: v
 
 .tk-take { font-size: 13.5px; color: var(--ink2); margin-top: 5px; line-height: 1.4; padding-left: 10px; border-left: 3px solid var(--us); }
 .tk-title { font-size: 15px; }
+.bb-labs span.r { transform: translateX(-100%); }
+.tk-ledger td:first-child, .tk-ledger th:first-child { width: 46px; }
