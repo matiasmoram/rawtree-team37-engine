@@ -1,0 +1,267 @@
+<title>Team 37 Evolution Deck</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>/*REVEAL_CSS*/</style>
+<style>
+/* Layout: 1280x720 stage, one picture per slide, a headline and at most one line under it.
+   Colour code: blue = kept / ours, vermilion = killed, grey = context. */
+:root{
+  --paper:#f3f5f7; --card:#ffffff; --ink:#0f1f2b; --mute:#5b6d79; --rule:#d3dbe1;
+  --blue:#1767c9; --blue-soft:#e3eefb; --red:#d4480f; --red-soft:#fbe7dc; --grey:#aab6be; --night:#0d1b26;
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
+.reveal{font-family:var(--body);font-size:24px;color:var(--ink);font-variant-numeric:tabular-nums}
+.reveal .slides{text-align:left}
+.reveal .slides section{padding:0;height:720px;box-sizing:border-box}
+.s{height:720px;box-sizing:border-box;padding:52px 72px 44px;display:flex;flex-direction:column;gap:18px}
+.reveal h1,.reveal h2,.reveal h3{font-family:var(--display);margin:0;line-height:1.06;text-wrap:balance;color:inherit;text-transform:none;letter-spacing:-.015em}
+.reveal h1{font-size:92px;font-weight:700}
+.reveal h2{font-size:48px;font-weight:600}
+.reveal p{margin:0;line-height:1.4}
+.eye{font:500 15px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--blue)}
+.sub{font-size:24px;color:var(--mute)}
+.mono{font-family:var(--mono)}
+.grow{flex:1;min-height:0}
+.row{display:flex;gap:20px}
+.foot{font-size:15px;color:var(--mute)}
+.dark .s{background:var(--night);color:#eef3f6}
+.dark .eye{color:#7db6f5} .dark .sub{color:#a9bac6}
+.big{font:700 72px/1 var(--display)} .big small{font-size:26px;font-weight:500;color:#a9bac6}
+.lab{font-size:17px;color:#a9bac6}
+/* hypothesis board */
+.board{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.h{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:13px 15px 12px;display:flex;flex-direction:column;gap:7px;min-height:118px;position:relative}
+.h q{font:600 19px/1.2 var(--display);quotes:none}
+.h .n{margin-top:auto;font:500 15px var(--mono)}
+.h .v{position:absolute;top:10px;right:12px;font:700 15px var(--mono);letter-spacing:.06em}
+.h q{padding-right:54px}
+.h.x{border-color:var(--red);background:var(--red-soft)} .h.x .v,.h.x .n{color:var(--red)}
+.h.x q{text-decoration:line-through;text-decoration-color:var(--red);text-decoration-thickness:2px}
+.h.k{border-color:var(--blue);background:var(--blue-soft)} .h.k .v,.h.k .n{color:var(--blue)}
+.h .g{font:500 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+.shot{background-color:#fff;background-repeat:no-repeat;border:1px solid var(--rule);border-radius:10px;width:100%}
+svg text{font-family:var(--body)}
+.reveal .progress{color:var(--blue)} .reveal .controls{color:var(--blue)}
+.reveal .slide-number{background:transparent;color:var(--mute);font:500 14px var(--mono)}
+.fam{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:330px;align-content:center;gap:12px;align-items:stretch}
+.m{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:18px 14px 16px;display:flex;flex-direction:column;gap:10px;color:var(--grey);min-width:0}
+.m h3{font-size:20px;line-height:1.15;color:var(--ink)} .reveal .m p{font-size:15px;line-height:1.35;color:var(--mute)}
+.m .chip{margin-top:auto;align-self:flex-start;font:500 13px var(--mono);padding:4px 9px;border-radius:99px;background:var(--paper);color:var(--mute);border:1px solid var(--rule)}
+.m.win{background:var(--blue);border-color:var(--blue);color:#fff} .m.win h3{color:#fff} .reveal .m.win p{color:#d7e6fa}
+.m.win .chip{background:#fff;color:var(--blue);border-color:#fff;font-weight:600}
+.fs{position:fixed;top:calc(14px + env(safe-area-inset-top,0px));right:calc(16px + env(safe-area-inset-right,0px));z-index:50;font:500 13px var(--mono);letter-spacing:.06em;padding:8px 12px;border-radius:8px;border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer}
+.fs:hover{border-color:var(--blue);color:var(--blue)} .fs:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+:fullscreen .fs{display:none}
+</style>
+
+<button class="fs" id="fs" type="button">⛶ Fullscreen</button>
+<div class="reveal"><div class="slides">
+
+<!-- 1 -->
+<section class="dark"><div class="s" style="justify-content:space-between">
+  <span class="eye">RawTree × Datathon FME 2026 · team_37</span>
+  <div style="display:flex;flex-direction:column;gap:22px">
+    <h1>Guess. Test.<br>Keep or kill.</h1>
+    <p class="sub">How we iterated a real-time recommender from a baseline list to 5th of 42.</p>
+  </div>
+  <div class="row" style="gap:56px;align-items:flex-end">
+    <div><div class="big">12</div><div class="lab">hypotheses</div></div>
+    <div><div class="big">9</div><div class="lab">killed</div></div>
+    <div><div class="big">1</div><div class="lab">model left standing</div></div>
+  </div>
+</div></section>
+
+<!-- 2 loop -->
+<section><div class="s">
+  <span class="eye">The process</span>
+  <h2>One loop, run again and again</h2>
+  <div class="grow" id="loop"></div>
+</div></section>
+
+<!-- 3 two gates -->
+<section><div class="s">
+  <span class="eye">How a hypothesis is verified</span>
+  <h2>Two gates: our own benchmark, then real shoppers</h2>
+  <div class="grow" id="gates"></div>
+</div></section>
+
+<!-- 4 board -->
+<section><div class="s" style="gap:14px">
+  <span class="eye">The hypotheses</span>
+  <h2>12 ideas went in. 3 survived.</h2>
+  <div class="board">
+    <div class="h x"><span class="g">live a/b</span><span class="v">KILLED</span><q>Shoppers buy in the category they browse</q><span class="n">1.38 vs 2.09</span></div>
+    <div class="h x"><span class="g">live a/b</span><span class="v">KILLED</span><q>Nudge them to other categories</q><span class="n">1.86 vs 2.49</span></div>
+    <div class="h x"><span class="g">live a/b</span><span class="v">KILLED</span><q>Penalise other categories</q><span class="n">1.84 vs 2.09</span></div>
+    <div class="h x"><span class="g">live a/b</span><span class="v">KILLED</span><q>Variety sells: cap each subcategory</q><span class="n">1.42 vs 1.85</span></div>
+    <div class="h x"><span class="g">live</span><span class="v">KILLED</span><q>Hand-written rules can rank</q><span class="n">1.02 – 1.5 vs 2.02</span></div>
+    <div class="h x"><span class="g">benchmark</span><span class="v">KILLED</span><q>Viewed-together products sell</q><span class="n">ranking −0.038</span></div>
+    <div class="h x"><span class="g">live a/b</span><span class="v">KILLED</span><q>Correct the model with the last 90 min</q><span class="n">2.15 vs 2.23</span></div>
+    <div class="h x"><span class="g">benchmark</span><span class="v">KILLED</span><q>Retrain on our own feedback</q><span class="n">AUC 0.83 vs 0.86</span></div>
+    <div class="h x"><span class="g">benchmark</span><span class="v">KILLED</span><q>A bigger model ranks better</q><span class="n">no clear winner</span></div>
+    <div class="h k"><span class="g">live</span><span class="v">KEPT</span><q>Score every product, no shortlist</q><span class="n">1.28 → 2.02</span></div>
+    <div class="h k"><span class="g">live</span><span class="v">KEPT</span><q>Cart and live shopper profiles add signal</q><span class="n">2.02 → 2.2</span></div>
+    <div class="h k"><span class="g">feedback</span><span class="v">KEPT</span><q>Never show what they already bought</q><span class="n">1 buy in 24,500 shown</span></div>
+  </div>
+  <p class="foot">Numbers are conversion % (expected purchases per 100 requests) with the idea vs. without it, unless stated.</p>
+</div></section>
+
+<!-- 5 model families -->
+<section><div class="s">
+  <span class="eye">The model families we tried</span>
+  <h2>Six kinds of model. One survived.</h2>
+  <div class="fam grow"><div class="m"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M6 10h20M6 18h14M6 26h20" stroke-width="3"/><circle cx="30" cy="18" r="3"/></svg><h3>Hand-weighted rules</h3><p>Evidence, cart-first and revenue policies: we set the weights.</p><span class="chip">~1.5</span></div><div class="m"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="12" r="5"/><circle cx="28" cy="10" r="5"/><circle cx="20" cy="28" r="5"/><path d="M15 12h8M12 17l5 7M26 15l-4 8" stroke-width="2.5"/></svg><h3>Co-visitation</h3><p>Products viewed together in recent sessions.</p><span class="chip">dropped</span></div><div class="m"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="27" r="3"/><circle cx="14" cy="20" r="3"/><circle cx="25" cy="11" r="3"/><circle cx="29" cy="17" r="3"/><circle cx="22" cy="26" r="3"/><path d="M4 32V5M4 32h30" stroke-width="2"/></svg><h3>Text embeddings</h3><p>Neighbours of a new product from its description, for cold start.</p><span class="chip">candidates only</span></div><div class="m"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M4 32V5M4 32h30" stroke-width="2"/><path d="M7 28L32 8" stroke-width="3"/><circle cx="12" cy="20" r="2.5"/><circle cx="20" cy="21" r="2.5"/><circle cx="26" cy="9" r="2.5"/></svg><h3>Linear bandit</h3><p>Ridge regression with an exploration bonus (LinUCB).</p><span class="chip">prototype</span></div><div class="m"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M4 32h30" stroke-width="2"/><path d="M5 31c7 0 8-24 14-24s7 24 14 24" stroke-width="3" fill="none"/></svg><h3>Bayesian + Thompson sampling</h3><p>Logistic regression with a posterior; ranks from a random draw, learns every 2 min.</p><span class="chip">challenger</span></div><div class="m win"><svg viewBox="0 0 38 38" width="54" height="54" fill="currentColor" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><circle cx="19" cy="7" r="4"/><circle cx="10" cy="19" r="4"/><circle cx="28" cy="19" r="4"/><circle cx="5" cy="31" r="3"/><circle cx="15" cy="31" r="3"/><circle cx="24" cy="31" r="3"/><circle cx="33" cy="31" r="3"/><path d="M19 11l-9 4M19 11l9 4M10 23l-5 5M10 23l5 5M28 23l-4 5M28 23l5 5" stroke-width="2"/></svg><h3>Gradient-boosted trees</h3><p>LightGBM: click model × buy-if-click model.</p><span class="chip">2.23 · final</span></div></div>
+  <p class="foot">The label at the bottom of each card is where that family ended up. Conversion % where it ran alone on live traffic.</p>
+</div></section>
+
+<!-- 5 staircase -->
+<section><div class="s">
+  <span class="eye">From A to B</span>
+  <h2>Each surviving idea is a step up</h2>
+  <div class="grow" id="stairs"></div>
+</div></section>
+
+<!-- 6 features -->
+<section><div class="s">
+  <span class="eye">Which signals mattered</span>
+  <h2>Take a signal away and see what the model loses</h2>
+  <div class="grow" id="abl"></div>
+  <p class="foot">Internal benchmark on our newest live lists: drop in how high the model ranks the product that was actually bought (MRR) when one group of signals is removed.</p>
+</div></section>
+
+<!-- 7 dashboard -->
+<section><div class="s" style="gap:14px">
+  <span class="eye">Every version we ran, from our dashboard</span>
+  <h2>The simple model beats everything before it</h2>
+  <div class="row grow" style="gap:28px;align-items:center">
+    <div style="flex:1.7;min-width:0"><div class="shot" style="aspect-ratio:690/392;background-image:url(it7_s3.png);background-size:208.7% auto;background-position:3.73% 55.71%"></div></div>
+    <p class="sub" style="flex:1">One box per version.<br>Further right is better.<br><br><b style="color:var(--ink)">Top two rows: the final model.</b> Everything below is a strategy we tried and dropped.</p>
+  </div>
+</div></section>
+
+<!-- 8 chosen model -->
+<section><div class="s">
+  <span class="eye">The model we chose</span>
+  <h2>Two questions, asked of every product</h2>
+  <div class="grow" id="model"></div>
+</div></section>
+
+<!-- 9 end -->
+<section class="dark"><div class="s" style="justify-content:space-between">
+  <span class="eye">team_37 · final round</span>
+  <div style="display:flex;flex-direction:column;gap:22px">
+    <h1>Simple is best.</h1>
+    <p class="sub" style="font-size:28px">Every rule we added made it worse.<br>The version that won is the one with nothing on top.</p>
+  </div>
+  <div class="row" style="gap:56px;align-items:flex-end">
+    <div><div class="big">5<small>th of 42</small></div><div class="lab">final score 53.7 · leader 58.3</div></div>
+    <div><div class="big">2.10<small>%</small></div><div class="lab">conversion · baseline 0.75</div></div>
+    <div><div class="big">21,600</div><div class="lab">of 21,600 requests answered on time</div></div>
+  </div>
+</div></section>
+
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.1.0/reveal.min.js"></script>
+<script>
+const C = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const blue=C('--blue'), red=C('--red'), grey=C('--grey'), ink=C('--ink'), mute=C('--mute'), rule=C('--rule'), card=C('--card'), bsoft=C('--blue-soft'), rsoft=C('--red-soft');
+const put=(id,s)=>document.getElementById(id).innerHTML=s;
+const arrow=k=>`<defs><marker id="ah${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${ink}"/></marker><marker id="ahr${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${red}"/></marker></defs>`;
+
+// 2 · the loop
+(function(){
+  const W=1136,H=470,cx=W/2,cy=H/2+4,rx=360,ry=160;
+  const N=[["1","Hypothesis","what makes people buy?",-90],["2","Benchmark","replay our newest live lists",0],["3","Live test","real shoppers, split in two",90],["4","Read the result","keep it or kill it",180]];
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Iteration loop">${arrow("L")}`;
+  s+=`<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="none" stroke="${rule}" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round"/>`;
+  // arrows between nodes along the ellipse
+  for(let i=0;i<4;i++){ const a0=(N[i][3]+28)*Math.PI/180,a1=(N[i][3]+62)*Math.PI/180;
+    s+=`<path d="M${cx+rx*Math.cos(a0)} ${cy+ry*Math.sin(a0)} A${rx} ${ry} 0 0 1 ${cx+rx*Math.cos(a1)} ${cy+ry*Math.sin(a1)}" fill="none" stroke="${ink}" stroke-width="3" marker-end="url(#ahL)"/>`; }
+  N.forEach(([n,t,d,a])=>{ const x=cx+rx*Math.cos(a*Math.PI/180), y=cy+ry*Math.sin(a*Math.PI/180), w=290,h=92;
+    s+=`<rect x="${x-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="12" fill="${n=='4'?ink:card}" stroke="${n=='4'?ink:blue}" stroke-width="2"/>`+
+       `<circle cx="${x-w/2+34}" cy="${y}" r="19" fill="${blue}"/><text x="${x-w/2+34}" y="${y+7}" font-size="20" font-weight="700" fill="#fff" text-anchor="middle">${n}</text>`+
+       `<text x="${x-w/2+66}" y="${y-5}" font-size="24" font-weight="700" fill="${n=='4'?'#fff':ink}" style="font-family:var(--display)">${t}</text>`+
+       `<text x="${x-w/2+66}" y="${y+21}" font-size="14.5" fill="${n=='4'?'#c3d0d9':mute}">${d}</text>`; });
+  s+=`<text x="${cx}" y="${cy-8}" font-size="62" font-weight="700" fill="${blue}" text-anchor="middle" style="font-family:var(--display)">× 12</text><text x="${cx}" y="${cy+26}" font-size="17" fill="${mute}" text-anchor="middle">in 21 hours</text>`;
+  put('loop',s+'</svg>');
+})();
+
+// 3 · two gates
+(function(){
+  const W=1136,H=470,y=150;
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Two verification gates">${arrow("G")}`;
+  // flow line
+  s+=`<line x1="20" x2="${W-150}" y1="${y}" y2="${y}" stroke="${ink}" stroke-width="3" marker-end="url(#ahG)"/>`;
+  // idea dots entering
+  [0,1,2,3,4,5].forEach(i=>s+=`<circle cx="${40+i*26}" cy="${y-22+((i*37)%44)}" r="9" fill="${grey}"/>`);
+  s+=`<text x="100" y="${y-52}" font-size="17" fill="${mute}" text-anchor="middle">ideas</text>`;
+  const gate=(x,n,t,sub)=>{ s+=`<rect x="${x-9}" y="${y-74}" width="18" height="148" rx="5" fill="${blue}"/><text x="${x}" y="${y-92}" font-size="14" font-weight="600" fill="${blue}" text-anchor="middle" letter-spacing="2">GATE ${n}</text>`+
+     `<text x="${x}" y="${y+112}" font-size="27" font-weight="700" fill="${ink}" text-anchor="middle" style="font-family:var(--display)">${t}</text>`;
+     sub.forEach((l,i)=>s+=`<text x="${x}" y="${y+142+i*24}" font-size="17" fill="${mute}" text-anchor="middle">${l}</text>`); };
+  gate(400,1,"Internal benchmark",["Hide the newest 30% of our own live lists.","Train the candidate on the rest.","Does it rank the bought product higher?","Cost: minutes, no shoppers involved"]);
+  gate(790,2,"Live A/B test",["Split shoppers by request id, same hours.","Each arm gets its own version name.","Judge: the leaderboard's conversion.","Cost: hours of real traffic"]);
+  // rejected branches
+  const rej=(x,txt)=>{ s+=`<path d="M${x-40} ${y} q20 0 30 -40" fill="none" stroke="${red}" stroke-width="2.5" marker-end="url(#ahrG)"/><text x="${x-22}" y="${y-56}" font-size="15" font-weight="600" fill="${red}" text-anchor="end">${txt}</text>`; };
+  rej(400,"3 stopped here"); rej(790,"6 stopped here");
+  s+=`<circle cx="${W-112}" cy="${y}" r="30" fill="${blue}"/><text x="${W-112}" y="${y+10}" font-size="28" font-weight="700" fill="#fff" text-anchor="middle">3</text><text x="${W-112}" y="${y+58}" font-size="17" font-weight="600" fill="${blue}" text-anchor="middle">kept</text>`;
+  put('gates',s+'</svg>');
+})();
+
+// 5 · staircase
+(function(){
+  const V=[["Rule policies","cart-first, bandits",1.5,grey,"~1.5"],["v0","our own rules",1.02,grey,"1.02"],["v1","model, one category",1.28,blue,"1.28"],["v3","model, every product",2.02,blue,"2.02"],["v4","+ cart, live profiles",2.2,blue,"~2.2"],["v10","nothing on top",2.23,blue,"2.23"]];
+  const W=1136,H=470,b=388,top=40,Y=v=>b-(v/2.5)*(b-top),bw=128,gap=44,x0=70;
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Conversion by version">${arrow("S")}`;
+  [[0.48,"baseline 0.48"],[1.88,"organisers' own recommender 1.88"]].forEach(([v,l])=>{ s+=`<line x1="${x0-20}" x2="${W-10}" y1="${Y(v)}" y2="${Y(v)}" stroke="${ink}" stroke-dasharray="5 6" stroke-width="1.3"/><text x="${W-10}" y="${Y(v)-8}" font-size="15" fill="${mute}" text-anchor="end">${l}</text>`; });
+  s+=`<line x1="${x0-20}" x2="${W-10}" y1="${b}" y2="${b}" stroke="${rule}" stroke-width="2"/>`;
+  V.forEach(([n,d,v,c,l],i)=>{ const x=x0+i*(bw+gap);
+    s+=`<rect x="${x}" y="${Y(v)}" width="${bw}" height="${b-Y(v)}" rx="6" fill="${c}" opacity="${c==blue?0.4+i*0.12:1}"/>`+
+       `<text x="${x+bw/2}" y="${Y(v)-12}" font-size="30" font-weight="700" fill="${ink}" text-anchor="middle" style="font-family:var(--display)">${l}</text>`+
+       `<text x="${x+bw/2}" y="${b+28}" font-size="19" font-weight="700" fill="${ink}" text-anchor="middle">${n}</text>`+
+       `<text x="${x+bw/2}" y="${b+52}" font-size="15" fill="${mute}" text-anchor="middle">${d}</text>`; });
+  s+=`<text x="${x0+bw+gap/2}" y="${b+78}" font-size="14" font-weight="600" fill="${mute}" text-anchor="middle" letter-spacing="2">RULES</text><text x="${x0+4*(bw+gap)-gap/2}" y="${b+78}" font-size="14" font-weight="600" fill="${blue}" text-anchor="middle" letter-spacing="2">ONE MODEL</text>`;
+  put('stairs',s+'</svg>');
+})();
+
+// 6 · ablation (drop in MRR of the bought product; baseline 0.535)
+(function(){
+  const A=[["How popular the product is",6.0],["The shopper's favourite categories",3.8],["Where the list is shown (page, device)",3.4],["How active the shopper is",2.7],["Attributes of what they are viewing",2.5],["Same category as the last view",2.4],["What is in their cart",2.1],["The shopper's taste in attributes",2.0],["Same brand or subcategory",1.5],["Price",1.1]];
+  const W=1136,H=410,lx=430,rx=W-90,X=v=>lx+(v/6.4)*(rx-lx),rh=38;
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="Feature ablation">`;
+  A.forEach(([n,v],i)=>{ const y=10+i*rh;
+    s+=`<text x="${lx-18}" y="${y+21}" font-size="19" font-weight="${i<3?700:500}" fill="${ink}" text-anchor="end">${n}</text>`+
+       `<rect x="${lx}" y="${y+3}" width="${X(v)-lx}" height="25" rx="4" fill="${i<3?blue:grey}"/>`+
+       `<text x="${X(v)+10}" y="${y+22}" font-size="18" font-weight="700" fill="${i<3?blue:mute}">−${v.toFixed(1)}</text>`; });
+  put('abl',s+'</svg>');
+})();
+
+// 8 · chosen model
+(function(){
+  const W=1136,H=470,y=120;
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="100%" role="img" aria-label="The chosen model">${arrow("M")}`;
+  const box=(x,w,t,d,fill,fg,sub)=>{ s+=`<rect x="${x}" y="${y-70}" width="${w}" height="140" rx="14" fill="${fill}" stroke="${fill==card?rule:fill}" stroke-width="2"/><text x="${x+w/2}" y="${y-8}" font-size="30" font-weight="700" fill="${fg}" text-anchor="middle" style="font-family:var(--display)">${t}</text><text x="${x+w/2}" y="${y+24}" font-size="16" fill="${sub}" text-anchor="middle">${d}</text>`; };
+  box(20,220,"45 signals","shopper · session · product",card,ink,mute);
+  box(300,250,"Will they click?","LightGBM",blue,"#fff","#d7e6fa");
+  box(610,250,"Will they buy?","if they click · LightGBM",blue,"#fff","#d7e6fa");
+  box(920,196,"Top 10","of ~5,000, in 45 ms",ink,"#fff","#c3d0d9");
+  s+=`<line x1="244" x2="294" y1="${y}" y2="${y}" stroke="${ink}" stroke-width="3" marker-end="url(#ahM)"/><text x="580" y="${y+14}" font-size="40" font-weight="700" fill="${ink}" text-anchor="middle">×</text><line x1="864" x2="914" y1="${y}" y2="${y}" stroke="${ink}" stroke-width="3" marker-end="url(#ahM)"/>`;
+  s+=`<text x="20" y="${y+138}" font-size="15" font-weight="600" fill="${blue}" letter-spacing="2">WHY THIS ONE</text>`;
+  [["It won every live test","against rules, limits, boosts and caps"],["Nothing sits on top of it","fewer parts to tune, fewer to break"],["It adapts through its inputs","profiles, carts, stock and trends update live"]].forEach(([t,d],i)=>{ const x=20+i*372;
+    s+=`<rect x="${x}" y="${y+158}" width="352" height="112" rx="12" fill="${card}" stroke="${rule}"/><circle cx="${x+34}" cy="${y+196}" r="15" fill="${blue}"/><path d="M${x+27} ${y+196} l5 6 l9 -11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`+
+       `<text x="${x+60}" y="${y+203}" font-size="21" font-weight="700" fill="${ink}" style="font-family:var(--display)">${t}</text><text x="${x+24}" y="${y+242}" font-size="16" fill="${mute}">${d}</text>`; });
+  put('model',s+'</svg>');
+})();
+
+Reveal.initialize({width:1280,height:720,margin:0.03,center:false,hash:false,history:false,controls:true,progress:true,slideNumber:'c/t',transition:'slide',transitionSpeed:'fast',backgroundTransition:'none'});
+
+const fsb=document.getElementById('fs');
+fsb.addEventListener('click',()=>{ const el=document.documentElement, rq=el.requestFullscreen||el.webkitRequestFullscreen;
+  const fail=()=>{fsb.textContent='Fullscreen blocked here: open the page in its own tab';};
+  if(!rq) return fail();
+  try{ const p=rq.call(el); if(p&&p.catch) p.catch(fail); }catch(e){ fail(); } });
+document.addEventListener('fullscreenchange',()=>setTimeout(()=>Reveal.layout(),100));
+</script>
