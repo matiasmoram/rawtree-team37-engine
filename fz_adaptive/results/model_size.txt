@@ -1,0 +1,5 @@
+current (lr .1, 220/150 trees)     buy_auc=0.9063 mrr_click=0.4811 mrr_buy=0.5304
+lr .05, 450/300 trees              buy_auc=0.9109 mrr_click=0.4759 mrr_buy=0.5502
+63 leaves                          buy_auc=0.9052 mrr_click=0.4683 mrr_buy=0.5211
+110/75 trees                       buy_auc=0.9016 mrr_click=0.4751 mrr_buy=0.5227
+min leaf 1000 (smoother)           buy_auc=0.9086 mrr_click=0.4848 mrr_buy=0.5258

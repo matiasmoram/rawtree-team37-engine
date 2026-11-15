@@ -10,7 +10,7 @@ did (click / purchase). A candidate model is trained WITHOUT those rows and scor
 import sys, json, numpy as np, pandas as pd, lightgbm as lgb
 from sklearn.metrics import roc_auc_score
 from features import FEATS, FI, D
-import learn
+import learn; learn.P["num_threads"] = 3
 
 def load_live():
     X, c, b, t = learn.live(); return X, c, b, t

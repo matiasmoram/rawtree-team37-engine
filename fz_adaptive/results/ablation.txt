@@ -1,0 +1,16 @@
+none {'click_auc': 0.8198, 'buy_auc': 0.9065, 'mrr_click': 0.4853, 'mrr_buy': 0.5349}
+cart {'click_auc': 0.8187, 'buy_auc': 0.9092, 'mrr_click': 0.4566, 'mrr_buy': 0.5137}
+user counts {'click_auc': 0.7791, 'buy_auc': 0.8421, 'mrr_click': 0.4529, 'mrr_buy': 0.5081}
+user price {'click_auc': 0.8202, 'buy_auc': 0.9101, 'mrr_click': 0.4601, 'mrr_buy': 0.5263}
+user attr {'click_auc': 0.81, 'buy_auc': 0.9011, 'mrr_click': 0.4419, 'mrr_buy': 0.5145}
+user brand {'click_auc': 0.8196, 'buy_auc': 0.9102, 'mrr_click': 0.4829, 'mrr_buy': 0.5468}
+user sub/cat {'click_auc': 0.8153, 'buy_auc': 0.906, 'mrr_click': 0.4346, 'mrr_buy': 0.4968}
+session attr {'click_auc': 0.8143, 'buy_auc': 0.9042, 'mrr_click': 0.4576, 'mrr_buy': 0.5096}
+ctx {'click_auc': 0.8173, 'buy_auc': 0.9053, 'mrr_click': 0.4466, 'mrr_buy': 0.5012}
+pop {'click_auc': 0.8116, 'buy_auc': 0.9013, 'mrr_click': 0.4112, 'mrr_buy': 0.4748}
+cat match {'click_auc': 0.8128, 'buy_auc': 0.9025, 'mrr_click': 0.4576, 'mrr_buy': 0.5111}
+sub/brand match {'click_auc': 0.8177, 'buy_auc': 0.9101, 'mrr_click': 0.4537, 'mrr_buy': 0.5198}
+in_rv {'click_auc': 0.8209, 'buy_auc': 0.91, 'mrr_click': 0.4799, 'mrr_buy': 0.5256}
+price vs session {'click_auc': 0.8194, 'buy_auc': 0.9101, 'mrr_click': 0.4673, 'mrr_buy': 0.5278}
+price {'click_auc': 0.8195, 'buy_auc': 0.9088, 'mrr_click': 0.4654, 'mrr_buy': 0.5239}
+live zeros {'click_auc': 0.8198, 'buy_auc': 0.9065, 'mrr_click': 0.4853, 'mrr_buy': 0.5349}

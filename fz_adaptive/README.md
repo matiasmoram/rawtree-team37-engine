@@ -61,6 +61,17 @@ screen -dmS reco ./run.sh                                 # live loop under a wa
 python setcfg.py <version> key=value ...                  # change config / start an A/B split, hot-reloaded
 ```
 
+## What is in `data/`
+
+Committed so the server can start without re-downloading: the trained model (`model.pkl`), its live config
+(`cfg.json`), the catalogue, and the aggregates computed in RawTree SQL (product popularity, device x region lift,
+shopper profiles, carts, purchases). With these, `./run.sh` serves immediately.
+
+Not committed (too large or rebuildable): the raw 60-day history (`python download.py se 30`), the training matrix
+(`python train.py build`), the saved live state and our live request/feedback logs.
+
+`results/` holds the raw output of the feature ablation and the model-size benchmark.
+
 ## What we learned live (Saturday practice round)
 
 Each variant ran under its own `model_version`; the leaderboard's expected-purchase score is the judge.
@@ -72,6 +83,7 @@ Arms listed together ran at the same time on a hash split of requests.
 | Penalty x0.5 on other categories vs. none | 1.84 vs. 2.09 → no penalty |
 | Boost x2.5 on other categories vs. none | 1.86 vs. 2.49 → no boost |
 | Diversity cap (max 2 per subcategory) vs. none | 1.42 vs. 1.85 → no cap |
+| Online correction on vs. off | 2.21 vs. 2.17 → tie, kept on for the final round's changing market |
 | Live rows up-weighted x4 in retraining vs. history only (offline benchmark) | click AUC 0.83 vs. 0.86 → history only for now |
 
 Final configuration (`fz-v9a-xcat1.0`): 2.25% conversion, 2.88% cold, over 2,657 requests (baseline 0.59%,
