@@ -35,6 +35,17 @@ l'assignatura aplica.
   recarrega sola quan canvia `data/dashboard_data.json`.
 - Exportació estàtica antiga (més detallada, sense servidor): `dist/index.html`.
 
+## Disseny (assignatura de VI)
+
+Una sola pàgina per període, pensada per llegir-se en 30 segons: **titular** (la conclusió) → **4 KPI** com a *bullet
+charts* (valor, objectiu i referència en una barra; millors que els indicadors de rellotge perquè comparem longituds) →
+**4 gràfics** amb el títol com a conclusió i una línia del que codifiquen → **registre de decisions**. Les explicacions
+llargues són a la ⓘ de cada targeta (*overview first, details on demand*). Regles seguides: el mínim de text i etiquetes
+directes dins el gràfic en lloc de llegendes (*Good practices* part 2; Stokes & Hearst 2022: el text útil és l'anotació,
+no els paràgrafs), grisos i un sol accent (blau = team_37, vermelló = pèrdua, negre discontinu = referència), cap
+parella vermell/verd i l'estat sempre amb glif + paraula (daltonisme), barres des de zero, caixes de Tukey amb totes les
+observacions a sobre, i 3-4 *chunks* per bloc (memòria de treball).
+
 ## Període Final (confirmatori)
 
 El selector **Final** canvia tota la vista a la comprovació de les prediccions congelades abans de la final

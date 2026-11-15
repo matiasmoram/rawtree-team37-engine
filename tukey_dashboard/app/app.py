@@ -1,18 +1,25 @@
 """Tauler de decisions de team_37 — Shiny for Python + Altair (Side Challenge Tukey, Datathon FME 2026, repte RawTree).
 
-Two periods share the same layout. Pràctica = exploratory evidence behind the decisions. Final = confirmatory: the frozen
-predictions checked against the final (Sun 10:00-12:00 CET), from the RawTree DB while the public API hides the leaderboard,
-plus the official metric once the API publishes it.
+Two periods, one layout. Pràctica = the exploratory evidence behind the decisions. Final = confirmatory: the predictions
+frozen before the final (Sun 10:00-12:00 CET) checked against it (RawTree DB + the official API aggregate).
 
-One view, simple on purpose (VI course: few views, many variables; titles = conclusions; one colour = one meaning;
-minimal interactions with meaningful defaults): verdict + 4 KPIs + 4 charts + the decision table.
+Design rules (VI course, UPC; see docs/vi_theory.md and README):
+- Overview first, details on demand (Shneiderman): one headline, four KPIs, four charts, one decision register;
+  every longer explanation sits behind the ⓘ of its card.
+- Minimum amount of text, keep headers simple, label directly (Good practices part 2, "Copy & labels"); the text that
+  stays is annotation inside the charts, where readers find it useful (Stokes & Hearst 2022, homework reading).
+- Start with greys, one accent: blue = team_37 / what we serve; vermillion = points lost; black dashed = organisers'
+  reference; grey = everyone else. No red/green pairs; status always glyph + word (colour-blindness lecture).
+- KPIs as bullet charts (value bar + target tick + reference tick), not gauges: lengths beat angles.
+- Working memory holds 3-4 chunks: 4 KPIs, 4 charts.
 Numbers come from pipeline/render.py, so text, KPIs and charts agree. The app reloads by itself when the pipeline
-rewrites data/dashboard_data.json (run_all.ps1).
+rewrites data/dashboard_data.json (run_all.ps1 / run_all.sh).
 
-Run:  .venv\\Scripts\\python.exe -m shiny run app\\app.py --port 8000   ->  http://127.0.0.1:8000
+Run:  .venv/bin/python -m shiny run app/app.py --port 8000   ->  http://127.0.0.1:8000
 """
 from __future__ import annotations
 
+import html
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -33,69 +40,111 @@ D0 = json.loads(DATA.read_text())
 T_MIN = min(r["t"] for r in D0["windows15"])
 T_MAX = min(max(r["t"] for r in D0["windows15"] if r["t"] < R.FINAL_START) + 900, R.FINAL_START)
 dt = lambda t: datetime.fromtimestamp(t, tz=CET)
+E = lambda s: html.escape(str(s), quote=True)
 
 
+# ------------------------------------------------------------------------------------------------ small builders
 def vega(id_, make):
     try:
         chart = make() if callable(make) else make
-    except (ValueError, StopIteration, KeyError, IndexError):
+    except (ValueError, StopIteration, KeyError, IndexError, TypeError):
         chart = None
     if chart is None:
-        return ui.p("Sense dades per a aquesta vista en aquest període.", class_="tk-small")
+        return ui.p("Sense dades per a aquesta vista en aquest període.", class_="tk-empty")
     spec = json.dumps(chart.to_dict()).replace("</", "<\\/")
-    return ui.HTML(f'<div id="c-{id_}" class="tk-chart"></div><script>TK.embed("{id_}", {spec});</script>')
+    return ui.HTML(f'<div id="c-{id_}" class="tk-chart" role="img"></div><script>TK.embed("{id_}", {spec});</script>')
 
 
-def head(title, how):
-    return ui.TagList(ui.span(title, class_="tk-title"),
-                      ui.popover(ui.span(" ⓘ", class_="tk-info"), ui.p(how, style="font-size:12.5px;margin:0"),
-                                 title="Com es llegeix", placement="bottom"))
+def head(title, sub, how):
+    """Card header: the takeaway (title), what is encoded (one line), and the long explanation on demand (ⓘ)."""
+    return ui.div(
+        ui.div(ui.span(title, class_="tk-title"),
+               ui.popover(ui.tags.button("i", class_="tk-info", **{"aria-label": "Com es llegeix"}),
+                          ui.p(how, class_="tk-pop"), title="Com es llegeix", placement="left")),
+        ui.div(sub, class_="tk-sub"))
 
 
 def card(h, c):
-    return ui.card(ui.card_header(ui.output_ui(h)), ui.output_ui(c), full_screen=True)
+    return ui.card(ui.card_header(ui.output_ui(h)), ui.output_ui(c), class_="tk-card", full_screen=True)
 
 
-app_ui = ui.page_sidebar(
-    ui.sidebar(
-        ui.input_radio_buttons("period", "Període", {"practice": "Pràctica", "final": "Final"}, selected="practice", inline=True),
-        ui.panel_conditional(
-            "input.period === 'practice'",
-            ui.input_slider("win", "Finestra (CET)", min=dt(T_MIN), max=dt(T_MAX), value=(dt(T_MIN), dt(T_MAX)),
-                            step=timedelta(hours=1), time_format="%d/%m %H:%M", timezone="+0100", drag_range=True)),
-        ui.output_ui("watch_head"),
-        ui.output_ui("watch"),
-        ui.h6("Llegenda"),
-        ui.p(ui.HTML('<span style="color:#2a78d6;font-weight:700">blau</span> = team_37 o la versió que servim · '
-                     '<span style="color:#d55e00;font-weight:700">vermelló</span> = pèrdua · negre discontinu = referència de '
-                     "l'organització · gris = la resta d'equips."), class_="tk-small"),
-        ui.output_ui("meta"),
-        width=290, open="always",
-    ),
+def bullet(lo, hi, value, ticks=(), bar_class="", band=None):
+    """Bullet chart in HTML: bar = value; ticks = (value, label, css class); optional band = (from, to, label)."""
+    pos = lambda v: max(0.0, min(100.0, 100 * (v - lo) / (hi - lo)))
+    parts = []
+    if band:
+        parts.append(f'<i class="bb-band" style="left:{pos(band[0]):.1f}%;width:{pos(band[1]) - pos(band[0]):.1f}%"></i>')
+    if value is not None:
+        parts.append(f'<i class="bb-bar {bar_class}" style="width:{pos(value):.1f}%"></i>')
+    labs = []
+    for v, lab, cls in ticks:
+        if v is None:
+            continue
+        parts.append(f'<i class="bb-tick {cls}" style="left:{pos(v):.1f}%" title="{E(lab)}"></i>')
+        labs.append(f'<span class="{cls}" style="left:{pos(v):.1f}%">{E(lab)}</span>')
+    return f'<div class="bb">{"".join(parts)}</div><div class="bb-labs">{"".join(labs)}</div>'
+
+
+def kpi(label, value, viz, note=""):
+    return (f'<div class="kpi"><div class="kpi-l">{E(label)}</div><div class="kpi-v">{value}</div>{viz}'
+            + (f'<div class="kpi-n">{E(note)}</div>' if note else "") + "</div>")
+
+
+def rank_strip(rank, n, other=None, other_lab="", top=None, top_lab=""):
+    """Positions 1..n on one line (1 = left): a filled dot for us, a hollow one for the comparison."""
+    pos = lambda r: 100 * (r - 1) / max(n - 1, 1)
+    s = '<div class="rs"><i class="rs-line"></i>'
+    if top:
+        s += f'<i class="rs-top" style="width:{pos(top) + 1.2:.1f}%"></i>'
+    if other:
+        s += f'<i class="rs-dot hollow" style="left:{pos(other):.1f}%" title="{E(other_lab)}"></i>'
+    s += f'<i class="rs-dot" style="left:{pos(rank):.1f}%"></i></div>'
+    labs = (f'<span class="us" style="left:0%">{E(top_lab)}</span>' if top else '<span style="left:0%">#1</span>')
+    labs += f'<span style="left:100%">#{n}</span>'
+    if other:
+        labs += f'<span class="lost" style="left:{pos(other):.1f}%">{E(other_lab)}</span>'
+    return s + f'<div class="bb-labs">{labs}</div>'
+
+
+GLYPH = {"✓": ("ok", "✓", "confirmat"), "✗": ("ko", "✗", "refutat"), "~": ("na", "–", "sense veredicte"),
+         "…": ("na", "…", "pendent")}
+
+
+# ------------------------------------------------------------------------------------------------ layout
+app_ui = ui.page_fillable(
     ui.head_content(
         ui.tags.link(rel="stylesheet", href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap"),
         ui.tags.link(rel="stylesheet", href="tukey.css"),
         ui.tags.script(src="vega.min.js"), ui.tags.script(src="vega-lite.min.js"), ui.tags.script(src="vega-embed.min.js"),
         ui.tags.script(src="tukey.js"),
+        ui.tags.title("Tauler Tukey · team_37"),
     ),
-    ui.output_ui("verdict"),
-    ui.layout_columns(
-        ui.value_box(ui.output_text("t1"), ui.output_text("k1"), ui.output_text("k1s")),
-        ui.value_box(ui.output_text("t2"), ui.output_text("k2"), ui.output_text("k2s")),
-        ui.value_box(ui.output_text("t3"), ui.output_text("k3"), ui.output_text("k3s")),
-        ui.value_box(ui.output_text("t4"), ui.output_text("k4"), ui.output_text("k4s")),
-        col_widths=[3, 3, 3, 3], fill=False,
-    ),
-    ui.layout_columns(card("h1", "c1"), card("h2", "c2"), col_widths=[6, 6], fill=False),
-    ui.layout_columns(card("h3", "c3"), card("h4", "c4"), col_widths=[6, 6], fill=False),
-    ui.card(ui.card_header(ui.span("Decisions per a la final: punts en joc, predicció registrada i resultat", class_="tk-title")),
-            ui.output_ui("ledger")),
-    title=ui.div(ui.div("Datathon FME 2026 · Side Challenge Tukey · repte RawTree", class_="tk-eyebrow"),
-                 ui.div("Tauler de decisions de team_37")),
-    fillable=False, lang="ca", window_title="Tauler Tukey · team_37",
+    ui.div(
+        ui.div(ui.div("Datathon FME 2026 · Side Challenge Tukey", class_="tk-eyebrow"),
+               ui.h1("Tauler de decisions de team_37", class_="tk-brand"), class_="tk-brandbox"),
+        ui.div(
+            ui.input_radio_buttons("period", None, {"practice": "Pràctica", "final": "Final"}, selected="final", inline=True),
+            ui.panel_conditional(
+                "input.period === 'practice'",
+                ui.input_slider("win", None, min=dt(T_MIN), max=dt(T_MAX), value=(dt(T_MIN), dt(T_MAX)),
+                                step=timedelta(hours=1), time_format="%d/%m %H:%M", timezone="+0100", drag_range=True, width="300px")),
+            class_="tk-controls"),
+        ui.HTML('<div class="tk-legend" aria-label="Llegenda">'
+                '<span><i class="sw us"></i>team_37</span><span><i class="sw lost"></i>pèrdua</span>'
+                '<span><i class="sw ref"></i>referència de l\'organització</span><span><i class="sw grey"></i>altres equips</span></div>'),
+        class_="tk-top"),
+    ui.div(
+        ui.output_ui("hero"),
+        ui.output_ui("kpis"),
+        ui.div(card("h1", "c1"), card("h2", "c2"), card("h3", "c3"), card("h4", "c4"), class_="tk-grid"),
+        ui.output_ui("ledger"),
+        ui.output_ui("foot"),
+        class_="tk-main"),
+    lang="ca", fillable_mobile=False, padding=0, gap=0, class_="tk-page",
 )
 
 
+# ------------------------------------------------------------------------------------------------ server
 def server(input, output, session):
     @reactive.file_reader(DATA)
     def data():
@@ -111,7 +160,7 @@ def server(input, output, session):
 
     @reactive.calc
     def FIN():
-        """Final: DB summary (always, once the final has started) merged with the official API numbers when published."""
+        """Final: DB summary merged with the official API aggregate when published."""
         D, base = data(), BASE()
         db = R.build_final_db(D, base, with_specs=False)
         try:
@@ -142,8 +191,6 @@ def server(input, output, session):
 
     @reactive.calc
     def window():
-        if input.period() == "final":
-            return R.FINAL_START, R.FINAL_END
         a, b = input.win()
         t0, t1 = a.timestamp(), b.timestamp()
         return (T_MIN, T_MAX) if t1 - t0 < 3 * 3600 else (t0, t1)
@@ -152,214 +199,142 @@ def server(input, output, session):
     def P():
         D = dict(data())
         t0, t1 = window()
-        period = "final" if input.period() == "final" else "practice"
         for key in ("windows15", "arms15", "field_hourly", "versions_hourly"):
             D[key] = [r for r in D[key] if t0 <= r["t"] < t1]
-        if period == "final":
-            return BASE()
         try:
-            res = R.build_period(D, period, with_specs=False)
+            res = R.build_period(D, "practice", with_specs=False)
         except Exception:
             res = None
         return res or BASE()
 
     N = lambda: P()["N"]
+    F = lambda: FIN()["N"]
+    result = lambda: data().get("manual", {}).get("final_result", {}).get("overall")
 
-    @reactive.calc
-    def T():
-        return R.texts(P(), pred(), input.period() == "final")
+    def counts():
+        o = OUT()
+        ok = sum(v[0] == "✓" for v in o.values())
+        return ok, sum(v[0] in "✓✗" for v in o.values())
 
-    def final_text():
-        F, o = FIN()["N"], OUT()
-        ok = [k for k, v in o.items() if v[0] == "✓"]
-        ko = [k for k, v in o.items() if v[0] == "✗"]
-        rf, rp = F.get("real"), F.get("real_prac_live")
-        h = (f"Final ({R.hm(F['t_first'])}–{R.hm(F['t_last'])} CET{'' if F.get('complete') else ', en curs'}): "
-             f"{R.pct(F['served_total'], 3)} de les peticions respostes a temps, una sola versió ({F.get('live')}, "
-             f"{R.pct(F.get('live_share'), 0)}) i {R.f(rf['rate'], 2) if rf else '–'} compres reals per 100. "
-             f"{len(ok)} de {len(ok) + len(ko)} prediccions mesurables, confirmades.")
-        res = data().get("manual", {}).get("final_result", {}).get("overall")
-        if F.get("official"):
-            h = (f"Final: {res + ', ' if res else ''}#{F['sel_rank']} de {F['n_teams']} en conversió "
-                 f"({R.f(F['sel_conv'], 2)} compres/100). " + h.split(": ", 1)[1][0].upper() + h.split(": ", 1)[1][1:])
-        items = [
-            ("D1", "La fiabilitat era la palanca, i s'ha arreglat",
-             f"Pitjor finestra de 10 min: {R.pct(F['w_min'], 1)} (pràctica: {R.pct(F['prac_served'], 1)} en total, "
-             f"{R.pct(F['prac_below95'], 0)} de finestres per sota del 95 %). "
-             f"{F['late_or_missing']} {'petició' if F['late_or_missing'] == 1 else 'peticions'} sense resposta a temps de "
-             f"{R.f(F['n_requests'], 0)}."),
-            ("D2 · D6", "Un sol model congelat; el model, per sota del previst",
-             f"{F.get('live')} va servir el {R.pct(F.get('live_share'), 1)} de les respostes, sense cap petició amb dues versions. "
-             + (f"Oficial: {R.f(F['sel_conv'], 2)} compres/100 (q {R.f(F['live_med'], 0)}), per sota de les frontisses de "
-                f"pràctica; la referència va caure igual (q {R.f(F['ref_q_final'], 0)}): {R.f(F['sel_conv'] - F['ref_conv'], 2, sign=True)} "
-                f"respecte a ella." if F.get("official") else
-                f"{R.f(rf['rate'], 2)} compres reals/100 (IC95 {R.f(rf['lo'], 2)}–{R.f(rf['hi'], 2)}) vs {R.f(rp['rate'], 2)} a la "
-                f"pràctica." if rf and rp else "")),
-            ("D3 · D5", "El patró de la pràctica es repeteix",
-             f"Slot 1 = {R.pct(F.get('slot1_share'), 0)} de les compres (predicció ≥ 35 %); ja comprat {R.pct(F.get('bb_all'), 1)} "
-             f"dels slots (≤ 1,5 %); en fred ×{R.f(F.get('live_cold_ratio') or F.get('cold_ratio_real'), 1)} la baseline freda (≥ ×2)."),
-        ]
-        return h, items
-
+    # ---------------------------------------------------------------- headline
     @render.ui
-    def verdict():
+    def hero():
         if is_final():
-            h, its = final_text()
-            items = [ui.tags.li(ui.span(d, class_="tk-did"), ui.strong(t + ". "), b) for d, t, b in its]
-            return ui.div(ui.p(h, class_="tk-h1"), ui.tags.ul(*items, class_="tk-verdict3"), class_="tk-top")
-        items = [ui.tags.li(ui.span(d, class_="tk-did"), ui.strong(h + ". "), b) for d, h, b, _ in T()["verdict"]]
-        return ui.div(ui.p(T()["h1"], class_="tk-h1"), ui.tags.ul(*items, class_="tk-verdict3"), class_="tk-top")
+            f, (ok, m) = F(), counts()
+            res = result()
+            h = (f"{(res + ' a la final').capitalize() if res else 'Final'}: {R.pct(f['served_total'], 3)} de respostes a temps "
+                 f"i {ok} de {m} prediccions confirmades.")
+            sub = (f"Diumenge 10:00–12:00 · {R.f(f['n_requests'], 0)} peticions · una sola versió servida "
+                   f"({f.get('live')}) · prediccions registrades a les {pred()['registered_at_cet'][-5:]}, abans de començar")
+            tag = "CONFIRMATORI"
+        else:
+            n = N()
+            h = (f"La fiabilitat ens costava més que el model: amb el mateix model, "
+                 f"#{n['best_rank']} responent-ho tot i #{n['worst_rank']} amb el {R.pct(n['worst_s'], 0)} a temps.")
+            sub = (f"Pràctica, dissabte 13:00 – diumenge 10:00 · {R.f(n['n_requests'], 0)} peticions · d'aquí surten les "
+                   f"decisions i les prediccions per a la final")
+            tag = "EXPLORATORI"
+        return ui.div(ui.span(tag, class_=f"tk-tag t-{tag.lower()}"), ui.h2(h, class_="tk-h1"), ui.p(sub, class_="tk-lede"),
+                      class_="tk-hero")
 
-    def _titles():
+    # ---------------------------------------------------------------- KPIs (bullet charts)
+    @render.ui
+    def kpis():
         if is_final():
-            return ("Final: respostes a temps", "Final: compres reals", "Prediccions registrades", "Resultat de la final")
-        return ("Posició a l'última hora", "Respostes a temps", "El model, quan respon", "En joc a la final")
+            f, o = F(), OUT()
+            rf, rp = f.get("real"), f.get("real_prac_live")
+            base_rate = ((f.get("real_prac") or {}).get("(fallback:missing)") or {}).get("rate")
+            glyphs = "".join(
+                f'<span class="g {GLYPH[o[k][0]][0]}" title="{E(k + ": " + GLYPH[o[k][0]][2])}">{k}<b>{GLYPH[o[k][0]][1]}</b></span>'
+                for k in ("D1", "D2", "D3", "D5", "D6") if k in o)
+            ok, m = counts()
+            cards = [
+                kpi("Respostes a temps", R.pct(f["served_total"], 3),
+                    bullet(50, 100, f["served_total"], [(98, "objectiu 98", "tgt"), (f.get("prac_served"), f"pràctica {R.f(f.get('prac_served'), 0)}", "ref")]),
+                    f"pitjor finestra de 10 min: {R.pct(f['w_min'], 1)}"),
+                kpi("Compres reals per 100", R.f(rf["rate"], 2) if rf else "–",
+                    bullet(0, 3, rf["rate"] if rf else None, [(rp["rate"] if rp else None, f"pràctica {R.f(rp['rate'], 2) if rp else ''}", "ref"),
+                                                             (base_rate, "baseline", "base")],
+                           band=(rf["lo"], rf["hi"], "IC95") if rf else None),
+                    f"interval del 95 %: {R.f(rf['lo'], 2)}–{R.f(rf['hi'], 2)}" if rf else ""),
+                kpi("Prediccions confirmades", f"{ok} de {m}", f'<div class="glyphs">{glyphs}</div>', "D4 no es podia mesurar"),
+                kpi("Resultat", E((result() or (f"#{f['sel_rank']}" if f.get("sel_rank") else "pendent")).capitalize()),
+                    rank_strip(f["sel_rank"], f["n_teams"], top=5, top_lab="top 5") if f.get("sel_rank") else "",
+                    f"#{f['sel_rank']} de {f['n_teams']} en conversió" if f.get("sel_rank") else "l'API encara no ho ha publicat"),
+            ]
+        else:
+            n = N()
+            ref = next((r["reference"] for r in reversed(data()["windows15"]) if r.get("reference")), None)
+            d2max = max(n["d2"].values()) if n["d2"] else None
+            cards = [
+                kpi("Posició, última hora", f"#{n['sel_rank']}",
+                    rank_strip(n["sel_rank"], 42, other=n["worst_rank"], other_lab=f"#{n['worst_rank']} {n['worst_label']}"),
+                    f"mateix model a {n['worst_label']}: #{n['worst_rank']}"),
+                kpi("Respostes a temps", R.pct(n["sel_s"], 0),
+                    bullet(0, 100, n["box_team_37"]["med"], [(98, "objectiu 98", "tgt"), (n["worst_s"], f"pitjor {R.f(n['worst_s'], 0)}", "lost")]),
+                    f"barra = mediana horària ({R.pct(n['box_team_37']['med'], 0)})"),
+                kpi("Compres per 100, quan respon", R.f(n["live_conv"], 2),
+                    bullet(0, 3, n["live_conv"], [(ref, f"referència {R.f(ref, 2)}", "ref")]), n["live"]),
+                kpi("Punts en joc a la final", f"fins a {R.f(n['d1_hi'], 0)}",
+                    bullet(0, 25, n["d1_hi"], [(d2max, f"model ≤ {R.f(d2max, 0)}", "ref")], bar_class="lost"),
+                    "per fiabilitat (D1), sobre 100"),
+            ]
+        return ui.HTML(f'<div class="tk-kpis">{"".join(cards)}</div>')
 
-    @render.text
-    def t1():
-        return _titles()[0]
-
-    @render.text
-    def t2():
-        return _titles()[1]
-
-    @render.text
-    def t3():
-        return _titles()[2]
-
-    @render.text
-    def t4():
-        return _titles()[3]
-
-    @render.text
-    def k1():
-        if is_final():
-            return R.pct(FIN()["N"]["served_total"], 3)
-        return f"#{N()['sel_rank']}"
-
-    @render.text
-    def k1s():
-        if is_final():
-            F = FIN()["N"]
-            return f"respostes a temps · pitjor finestra {R.pct(F['w_min'], 1)} · pràctica {R.pct(F['prac_served'], 1)}"
-        n = N()
-        return f"{n['sel_label']} · amb el mateix model vam ser #{n['worst_rank']} a {n['worst_label']}"
-
-    @render.text
-    def k2():
-        if is_final():
-            r = FIN()["N"].get("real")
-            return f"{R.f(r['rate'], 2)} compres/100" if r else "–"
-        return R.pct(N()["sel_s"], 1)
-
-    @render.text
-    def k2s():
-        if is_final():
-            F = FIN()["N"]
-            r, p_ = F.get("real"), F.get("real_prac_live")
-            return (f"reals, IC95 {R.f(r['lo'], 2)}–{R.f(r['hi'], 2)} · {F.get('live')} a la pràctica {R.f(p_['rate'], 2)}" if r and p_ else "")
-        n = N()
-        return f"objectiu 98 % · mediana horària {R.pct(n['box_team_37']['med'], 0)} · mínim {R.pct(n['worst_s'], 0)}"
-
-    @render.text
-    def k3():
-        if is_final():
-            o = OUT()
-            ok = sum(v[0] == "✓" for v in o.values())
-            m = sum(v[0] in "✓✗" for v in o.values())
-            return f"{ok} de {m} ✓"
-        return f"{R.f(N()['live_conv'], 2)} compres/100"
-
-    @render.text
-    def k3s():
-        if is_final():
-            o = OUT()
-            pend = [k for k, v in o.items() if v[0] not in "✓✗"]
-            return "prediccions mesurables confirmades" + (f" · sense veredicte: {', '.join(pend)}" if pend else "")
-        n = N()
-        return f"{n['live']} · referència de l'organització {R.f(next(r['reference'] for r in data()['windows15'][-4:]), 2)}"
-
-    @render.text
-    def k4():
-        if is_final():
-            F, res = FIN()["N"], data().get("manual", {}).get("final_result", {})
-            if res.get("overall"):
-                return res["overall"].capitalize()
-            return f"#{F['sel_rank']}" if F.get("has_api") and F.get("sel_rank") else "pendent"
-        return f"fins a {R.f(N()['d1_hi'], 1)} punts"
-
-    @render.text
-    def k4s():
-        if is_final():
-            F = FIN()["N"]
-            if F.get("has_api"):
-                return (f"#{F['sel_rank']} de {F['n_teams']} en conversió: {R.f(F.get('sel_conv'), 2)} compres/100 esperades "
-                        f"(referència {R.f(F.get('ref_conv'), 2)}, baseline {R.f(F.get('base_conv'), 2)})")
-            return "l'API amaga la classificació fins que acaba la final"
-        n = N()
-        return f"per fiabilitat (D1), sobre 100 · canviar de model ≤ {R.f(max(n['d2'].values()) if n['d2'] else None, 1)}"
-
+    # ---------------------------------------------------------------- chart cards
     @render.ui
     def h1():
         if is_final():
-            F = FIN()["N"]
-            pb, fb = F["prac_box"], F["final_box"]
-            return head(f"A la pràctica, el {R.pct(F['prac_below95'], 0)} de les finestres de 10 min van quedar per sota del 95 % "
-                        f"(frontissa inferior {R.pct(pb['h1'], 0)}); a la final, {'cap' if not F['final_below98'] else F['final_below98']} "
-                        f"de {F['n_windows']} per sota del 98 % (mínim {R.pct(fb['min'], 1)})",
-                        "Cada marca és una finestra de 10 minuts; la caixa de Tukey en resumeix la distribució (frontisses, mediana i "
-                        "bigotis fins a 1,5·H). Gris: pràctica; blau: final. Discontinu: objectiu del 98 % (D1). Font: "
-                        "team_37.feedback, on una resposta tardana compta com a no resposta, igual que a l'on-time oficial.")
+            f = F()
+            return head(f"De {R.pct(f['prac_served'], 0)} a {R.pct(f['served_total'], 3)} de respostes a temps",
+                        "Cada marca és una finestra de 10 minuts · caixa de Tukey de la pràctica",
+                        f"Pràctica: el {R.pct(f['prac_below95'], 0)} de les finestres van quedar per sota del 95 % (frontissa inferior "
+                        f"{R.pct(f['prac_box']['h1'], 0)}). Final: cap de les {f['n_windows']} per sota del 98 % (mínim "
+                        f"{R.pct(f['final_box']['min'], 1)}). Una resposta tardana compta com a no resposta, igual que a l'on-time "
+                        "oficial. Font: team_37.feedback.")
         n = N()
-        return head(f"Ens movem en horitzontal: el model és dels millors i el que ens fa caure és respondre tard "
-                    f"(#{n['best_rank']} amb {R.pct(n['best_s'], 0)} a temps, #{n['worst_rank']} amb {R.pct(n['worst_s'], 0)})",
-                    "Cada punt gris és un equip a l'última hora de la finestra. A la dreta = respon a temps; amunt = el seu model "
-                    "ven més quan respon (compres/100 descomptant les respostes per defecte). Blau ple: team_37 ara; blau buit: "
-                    "el mateix model a l'hora pitjor. Teoria: posició en escala comuna per a la relació entre dues variables "
-                    "(Munzner); un to sobre gris (pop-out).")
+        return head("La fiabilitat ens enfonsava, no el model",
+                    f"Cada punt és un equip a {n['sel_label']} · dreta = respon a temps · amunt = ven més quan respon",
+                    f"Blau ple: team_37 ara (#{n['best_rank'] if n['sel_rank'] == n['best_rank'] else n['sel_rank']}); blau buit: el "
+                    f"mateix model a {n['worst_label']}, quan només responia el {R.pct(n['worst_s'], 0)} (#{n['worst_rank']}). La "
+                    "fletxa és el que hauríem guanyat responent-ho tot. Eix vertical: compres per 100 descomptant les respostes "
+                    "per defecte, perquè una petició no resposta rep la llista baseline. Teoria: dispersió per a una relació entre "
+                    "dues variables; un sol to sobre gris.")
 
     @render.ui
     def c1():
         if is_final():
-            return vega("v1", lambda: C.final_reliability(FIN()["N"]))
+            return vega("v1", lambda: C.final_reliability(F()))
         t0, t1 = window()
         return vega("v1", lambda: C.field(data(), t0, t1))
 
     @render.ui
     def h2():
-        if is_final() and FIN()["N"].get("field_final"):
-            F = FIN()["N"]
-            top = F["field_final"][:5]
-            return head(f"A la final els equips forts responen gairebé tots ~100 % a temps: ara ens separa el model. team_37, "
-                        f"#{F['sel_rank']} de {F['n_teams']} amb {R.f(F['sel_conv'], 2)} compres/100, a "
-                        f"{R.f(F['top_conv'] - F['sel_conv'], 2)} del primer i a {R.f(F['sel_conv'] - F['ref_conv'], 2, sign=True)} "
-                        f"de la referència",
-                        "Mètrica oficial de l'API per a tota la final (10:00–12:00): cada punt és un equip; a la dreta = respon a "
-                        "temps; amunt = compres esperades per 100 peticions. Blau: team_37; negre discontinu: referència i baseline "
-                        "de l'organització. És la mateixa vista que V1 de la pràctica: allà ens movíem en horitzontal (fiabilitat); "
-                        "aquí la fiabilitat ja no diferencia. Primers cinc en conversió: "
-                        + ", ".join(f"{r['team']} {R.f(r['conv'], 2)}" for r in top) + ".")
+        if is_final() and F().get("field_final"):
+            f = F()
+            top = f["field_final"][:5]
+            return head(f"#{f['sel_rank']} de {f['n_teams']} en conversió: ara ens separa el model",
+                        "Mètrica oficial de tota la final · cada punt és un equip",
+                        f"{R.f(f['sel_conv'], 2)} compres esperades per 100 peticions, a {R.f(f['top_conv'] - f['sel_conv'], 2)} del "
+                        f"primer i a {R.f(f['sel_conv'] - f['ref_conv'], 2, sign=True)} de la referència. Gairebé tots els equips "
+                        "forts responen ~100 % a temps: a la pràctica ens moviem en horitzontal (fiabilitat), aquí ja no. Primers "
+                        "cinc en conversió: " + ", ".join(f"{r['team']} {R.f(r['conv'], 2)}" for r in top) + ".")
         if is_final():
-            F = FIN()["N"]
-            return head(f"La latència no ha canviat (p95 ≤ {R.f(F['p95_final'], 1)} s a la final, {R.f(F['p95_lo'], 1)}–"
-                        f"{R.f(F['p95_hi'], 1)} s per hora a la pràctica): la millora ve d'un sol writer estable, no d'anar més ràpid",
-                        "Caixa de Tukey de la latència p95 de cada hora (respostes servides per team_37), mínim a màxim; cada punt és "
-                        "una hora. Vermelló: el límit de 3 s de la competició. Si el problema hagués estat la velocitat del model, la "
-                        "caixa de la final seria més baixa; és igual, per tant el que va fallar a la pràctica eren les caigudes.")
+            return head("La latència no ha canviat", "Latència p95 per hora · pràctica vs final",
+                        "La millora ve d'un sol writer estable, no d'anar més ràpid.")
         n = N()
-        b, tb = n["box_team_37"], n["box_top-6"]
-        return head(f"Responem a temps el {R.pct(b['med'], 0)} de mediana (frontisses {R.f(b['h1'], 0)}–{R.f(b['h2'], 0)}) "
-                    f"contra el {R.f(tb['h1'], 0)}–{R.f(tb['h2'], 0)} % del top-6: la caiguda de {n['worst_label']} "
-                    f"va costar {R.f(n['gain_worst'], 1)} punts",
-                    "On-time per finestra de 15 minuts. Blau: team_37; gris: mediana dels 6 primers equips; discontinu: objectiu "
-                    "del 98 %. Una petició no resposta a temps rep la llista per defecte de l'organització. Teoria: línia per al "
-                    "temps; resum de cinc números de Tukey al títol.")
+        return head(f"Una caiguda del writer: {R.f(n['gain_worst'], 0)} punts perduts en una hora",
+                    "% de respostes a temps per finestra de 15 min · gris: mediana del top-6",
+                    f"Mediana horària {R.pct(n['box_team_37']['med'], 0)} (frontisses {R.f(n['box_team_37']['h1'], 0)}–"
+                    f"{R.f(n['box_team_37']['h2'], 0)}) contra {R.f(n['box_top-6']['h1'], 0)}–{R.f(n['box_top-6']['h2'], 0)} % "
+                    "del top-6. Una petició no resposta a temps rep la llista per defecte de l'organització. Arrossega a la "
+                    "barra de dalt per filtrar les hores.")
 
     @render.ui
     def c2():
         if is_final():
-            if FIN()["N"].get("field_final"):
-                return vega("v2", lambda: C.final_field(FIN()["N"]))
+            if F().get("field_final"):
+                return vega("v2", lambda: C.final_field(F()))
             return vega("v2", lambda: C.final_latency(data()))
         t0, t1 = window()
         return vega("v2", lambda: C.reliability(data(), t0, t1))
@@ -367,50 +342,47 @@ def server(input, output, session):
     @render.ui
     def h3():
         if is_final():
-            F = FIN()["N"]
-            rf, rp = F.get("real"), F.get("real_prac_live")
+            f = F()
+            rf, rp = f.get("real"), f.get("real_prac_live")
             if not (rf and rp):
-                return head("Compres reals de la versió servida", "Sense dades.")
-            same = rp["lo"] <= rf["rate"] <= rp["hi"] or rf["lo"] <= rp["rate"] <= rf["hi"]
-            return head(f"{F['live']} ven a la final el que prometia: {R.f(rf['rate'], 2)} compres reals/100 contra "
-                        f"{R.f(rp['rate'], 2)} a la pràctica ({'intervals que se solapen' if same else 'diferència real'}), "
-                        f"{R.f(rf['rate'] / ((F.get('real_prac') or {}).get('(fallback:missing)') or {'rate': rf['rate']})['rate'], 1)} vegades la llista baseline",
-                        "Compres reals per 100 peticions amb interval de confiança del 95 % exacte de Poisson. Blau: la final; gris: la "
-                        "pràctica (la mateixa versió, la versió anterior i la llista baseline que reben les peticions no respostes). La "
-                        "mètrica oficial (compres esperades del simulador) té ~8 vegades menys soroll i s'afegirà quan l'API la publiqui.")
+                return head("Compres reals de la versió servida", "", "Sense dades.")
+            return head("El model ven el que prometia",
+                        "Compres reals per 100 peticions · interval del 95 %",
+                        f"{f['live']}: {R.f(rf['rate'], 2)} a la final contra {R.f(rp['rate'], 2)} a la pràctica; els intervals se "
+                        "solapen. Blau: la final; gris: la pràctica (la mateixa versió, l'anterior i la llista baseline). Són "
+                        f"compres reals, amb sort; la mètrica oficial (sense sort) dona q {R.f(f.get('live_med'), 0)}, per sota del "
+                        "que esperàvem, però la referència també va caure: la final era més difícil.")
         n = N()
         tie = n["comp"].get("fz-v10-nocorr")
-        lead = (f"fz-v9a i fz-v10-nocorr empaten (diferència aparellada {R.f(tie['dconv'], 2, sign=True)} compres/100 en "
-                f"{tie['k']} finestres); la resta, per sota" if tie and tie.get("paired") else "Les versions fz són les millors")
-        return head(f"{lead} → servir-ne una de sola, sense repartir el trànsit (en 2 h un 50/50 només veu diferències ≥ "
-                    f"{R.f(n['mde_e'], 2)})",
-                    "Caixa de Tukey per versió (bigotis fins a 1,5 vegades l'interval entre quartils): diferència de compres/100 "
-                    "respecte a la referència de l'organització a la mateixa finestra de 15 min, per comparar hores diferents de "
-                    "forma justa. Blau: la versió triada per a la final (fz-v10-nocorr, 09:43). Teoria: distribucions, no barres "
-                    "de mitjanes.")
+        title = ("fz-v9a i fz-v10-nocorr empaten; la resta, per sota" if tie and tie.get("paired")
+                 else f"{n['live']} és la millor versió")
+        return head(title, "Compres per 100 sobre la referència, per finestra de 15 min · caixa de Tukey",
+                    (f"Diferència aparellada fz-v9a − nocorr: {R.f(tie['dconv'], 2, sign=True)} compres/100 en {tie['k']} "
+                     "finestres compartides, dins del soroll. " if tie and tie.get("paired") else "")
+                    + f"Un 50/50 durant les 2 h de la final només veuria diferències ≥ {R.f(n['mde_e'], 2)}: per això es va "
+                    "congelar un sol model. Blau: la versió triada per a la final.")
 
     @render.ui
     def c3():
         if is_final():
-            return vega("v3", lambda: C.final_realised(FIN()["N"]))
+            return vega("v3", lambda: C.final_realised(F()))
         t0, t1 = window()
         return vega("v3", lambda: C.versions(data(), t0, t1))
 
     @render.ui
     def h4():
         if is_final():
-            F = FIN()["N"]
-            return head(f"El patró del slot 1 es repeteix: fa el {R.pct(F.get('slot1_share'), 0)} de les compres i els productes "
-                        f"vistos a la sessió continuen a dalt; ja comprat = {R.pct(F.get('bb_all'), 1)} dels slots",
-                        "Compres per cada 1.000 vegades que un producte surt en primera posició, segons la seva relació amb el comprador. "
-                        "Marca negra: la pràctica (exploratori); punt blau amb IC95: la final (confirmatori). Si el punt cau sobre la "
-                        "marca, la regla apresa a la pràctica es manté amb dades noves.")
+            f = F()
+            return head("El patró de la posició 1 es repeteix",
+                        "Compres per 1.000 vegades al slot 1 · marca: pràctica · punt: final (interval del 95 %)",
+                        f"El slot 1 fa el {R.pct(f.get('slot1_share'), 0)} de les compres (predicció ≥ 35 %) i els productes ja "
+                        f"comprats ocupen l'{R.pct(f.get('bb_all'), 1)} dels slots (≤ 1,5 %). Si el punt cau sobre la marca o la "
+                        "supera, la regla apresa a la pràctica es manté amb dades noves.")
         n = N()
-        return head(f"El slot 1 fa el {R.pct(n['slot1_share'], 0)} de les compres: a dalt, productes vistos a la sessió i "
-                    f"del carret; un producte ja comprat gairebé no es ven ({R.f(n['bb1'], 1)} per 1.000)",
-                    "Compres per cada 1.000 vegades que un producte es mostra en primera posició, segons la seva relació amb el "
-                    "comprador. Barres des de zero, ordenades per valor. Vermelló: posició malgastada (ja comprat). Dades de "
-                    "pràctica (team_37.feedback).")
+        return head(f"La posició 1 decideix: {R.pct(n['slot1_share'], 0)} de les compres",
+                    "Compres per 1.000 vegades al slot 1, segons la relació del producte amb el comprador",
+                    f"A dalt, productes vistos a la sessió i al carret. Un producte ja comprat gairebé no es ven "
+                    f"({R.f(n['bb1'], 1)} per 1.000): per això el vet a recompres (D3). Barres des de zero, ordenades.")
 
     @render.ui
     def c4():
@@ -418,56 +390,52 @@ def server(input, output, session):
             return vega("v4", lambda: C.final_slot_one(data()))
         return vega("v4", lambda: C.slot_one(data()))
 
-    @render.ui
-    def watch_head():
-        return ui.h6("Disparadors durant la final: han saltat?" if is_final() else "Vigilar durant la final")
-
-    @render.ui
-    def watch():
-        if is_final():
-            F = FIN()["N"]
-            checks = [
-                ("On-time d'una finestra < 95 %", F["w_min"] < 95, f"pitjor {R.pct(F['w_min'], 1)}"),
-                ("Una versió < 95 % de les respostes", (F.get("live_share") or 0) < 95, f"{F.get('live')} {R.pct(F.get('live_share'), 0)}"),
-                ("Latència p95 > 2,5 s", (F.get("p95_final") or 0) > 2.5, f"p95 màxim {R.f(F.get('p95_final'), 1)} s"),
-                ("Peticions amb dues versions", (F.get("multi_version") or 0) > 0, f"{F.get('multi_version', 0)}"),
-            ]
-            lis = [ui.tags.li(ui.strong(a), f" → {'SÍ' if fired else 'no'} ({v})") for a, fired, v in checks]
-            return ui.tags.ul(*lis, class_="tk-watch")
-        base = BASE()
-        t = R.texts(base, pred(), False)
-        lis = [ui.tags.li(ui.strong(a), f" → {b}") for a, b, _ in t["watch"]]
-        alarm = t.get("alarm")
-        if alarm and FIN() is not None:   # the trigger was acted on before the final: say so instead of a stale alarm
-            F = FIN()["N"]
-            alarm = (f"Disparador D6 resolt abans de la final: a les 09:43 es va congelar {F.get('live')}, que ha servit el "
-                     f"{R.pct(F.get('live_share'), 0)} de les respostes de la final.")
-            return ui.TagList(ui.p(alarm, class_="tk-small"), ui.tags.ul(*lis, class_="tk-watch"))
-        return ui.TagList(ui.p(alarm, class_="tk-alarm") if alarm else None, ui.tags.ul(*lis, class_="tk-watch"))
-
-    @render.ui
-    def meta():
-        p_ = pred()
-        built = datetime.fromtimestamp(DATA.stat().st_mtime, tz=CET).strftime("%d/%m %H:%M")
-        return ui.p(f"Prediccions registrades {p_['registered_at_cet']} (sha {p_['sha256'][:8]}). Dades: API pública de RawTree, "
-                    f"base de dades team_37, Notion i GitHub de l'equip. Actualitzat {built} CET.", class_="tk-small")
-
+    # ---------------------------------------------------------------- decision register
     @render.ui
     def ledger():
-        base = BASE()
-        out = OUT()
+        base, out = BASE(), OUT()
         rows = R.ledger_rows(base, pred(), out)
+        stakes = [v for r in rows for _, v in r.get("ticks", []) if v is not None]
+        top = max(5.0, (int(max(stakes + [1]) / 5) + 1) * 5)
         trs = []
         for r in rows:
-            vals = [(lab, v) for lab, v in r.get("ticks", []) if v is not None]
-            stake = (" · ".join(f"{lab} {R.f(v, 1)}" for lab, v in vals)) if vals else r.get("note", "–")
+            ticks = [(lab, v) for lab, v in r.get("ticks", []) if v is not None]
+            if ticks:
+                hi = max(v for _, v in ticks)
+                track = (f'<div class="st"><i class="st-bar{" lost" if r["id"] == "D1" else ""}" style="width:{100 * hi / top:.1f}%"></i></div>'
+                         f'<span class="st-l">fins a {R.f(hi, 1)}</span>')
+            else:
+                track = '<span class="st-l muted">–</span>'
             oc = r.get("outcome")
-            res = f"{oc[0]} {oc[1]}" if oc else "pendent (després de les 12:00)"
-            cls = "ok" if oc and oc[0] == "✓" else "ko" if oc and oc[0] == "✗" else "pend"
-            trs.append(f"<tr><th><span class='tk-did'>{r['id']}</span>{R.esc(r['what'])}</th><td>{R.esc(stake)}</td>"
-                       f"<td>{R.esc(r['pred'])}</td><td class='outc {cls}'>{R.esc(res)}</td></tr>")
-        return ui.HTML("<table class='tk-table'><thead><tr><th>Decisió</th><th>Punts finals en joc</th><th>Predicció (abans de la final)</th>"
-                       f"<th>Resultat a la final</th></tr></thead><tbody>{''.join(trs)}</tbody></table>")
+            cls, g, word = GLYPH[oc[0]] if oc else ("na", "…", "pendent")
+            detail = oc[1] if oc else "després de les 12:00"
+            short = detail.split(";")[0].split(" (")[0] if len(detail) > 60 else detail
+            trs.append(f'<tr><td><span class="did">{r["id"]}</span></td><td class="what">{E(r["what"])}</td>'
+                       f'<td class="stake">{track}</td><td class="pred">{E(r["pred"])}</td>'
+                       f'<td class="oc {cls}" title="{E(detail)}"><b>{g} {word}</b><span>{E(short)}</span></td></tr>')
+        return ui.div(
+            ui.div(ui.span("Decisions per a la final", class_="tk-title"),
+                   ui.span(f"prediccions registrades {pred()['registered_at_cet']} · sha {pred()['sha256'][:8]}", class_="tk-sub inline"),
+                   class_="tk-lhead"),
+            ui.HTML('<table class="tk-ledger"><thead><tr><th></th><th>Decisió</th><th>Punts en joc (sobre 100)</th>'
+                    f'<th>Predicció</th><th>A la final</th></tr></thead><tbody>{"".join(trs)}</tbody></table>'),
+            class_="tk-card tk-ledgerbox")
+
+    @render.ui
+    def foot():
+        built = datetime.fromtimestamp(DATA.stat().st_mtime, tz=CET).strftime("%d/%m %H:%M")
+        return ui.HTML(
+            '<footer class="tk-foot"><details><summary>Mètode, fonts i per què aquests gràfics</summary><div class="cols">'
+            "<p><b>Mètriques.</b> Conversió = compres esperades per 100 peticions (probabilitat del simulador, sense sort). "
+            "Puntuació = 100·(equip − baseline)/(oracle − baseline). Una petició no resposta a temps rep la llista baseline, "
+            "d'on equip = on-time·model + (1 − on-time)·baseline.</p>"
+            "<p><b>Tukey.</b> Caixes amb frontisses i bigotis fins a 1,5·H, mostrant també cada observació; anàlisi exploratòria "
+            "a la pràctica → prediccions congelades amb hash → confirmació a la final.</p>"
+            "<p><b>VI.</b> Vista general i detall a demanda (ⓘ); títols = conclusions; etiquetes directes; grisos i un sol "
+            "accent; KPI com a <i>bullet charts</i>; estat amb glif + paraula, mai només color.</p>"
+            "<p><b>Fonts.</b> API pública datathon.rawtree.dev (classificació), base de dades RawTree (team_37.feedback, "
+            "submissions, shop.*), Notion i repositori de l'equip.</p>"
+            f"</div></details><span>Actualitzat {built} CET</span></footer>")
 
 
 app = App(app_ui, server, static_assets=APP / "www")

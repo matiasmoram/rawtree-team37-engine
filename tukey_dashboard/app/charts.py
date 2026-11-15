@@ -18,10 +18,14 @@ REL_LABEL = {"session_earlier_view": "Vist abans a la sessió", "session_last_vi
 
 
 def _cfg(ch):
-    return (ch.configure(background="#ffffff", font=FONT, autosize={"type": "fit-x", "contains": "padding"})
+    # quiet non-data ink: light grid, no domain line, muted labels (Good practices: "remove to improve")
+    return (ch.configure(background="#ffffff", font=FONT, autosize={"type": "fit-x", "contains": "padding"},
+                         padding={"left": 2, "right": 8, "top": 6, "bottom": 2})
             .configure_view(stroke=None)
-            .configure_axis(labelColor=MUTED, titleColor=INK, domainColor="#c3c2b7", tickColor="#c3c2b7", gridColor="#ecebe6",
-                            labelFontSize=11, titleFontSize=11.5, titleFontWeight=600)
+            .configure_axis(labelColor=MUTED, titleColor=MUTED, domain=False, tickColor="#dcdbd5", tickSize=3,
+                            gridColor="#efeee9", labelFontSize=11, titleFontSize=11, titleFontWeight=400, titlePadding=8,
+                            labelPadding=4)
+            .configure_axisY(ticks=False)
             .configure_text(font=FONT, fontSize=11))
 
 
@@ -76,9 +80,17 @@ def reliability(D, t0, t1, width="container", height=250):
     goal = alt.Chart(pd.DataFrame([{"v": 98}])).mark_rule(color=US, strokeDash=[5, 4], opacity=0.7).encode(y="v:Q")
     g = alt.Chart(pd.DataFrame([{"tc": df["tc"].iloc[-1], "v": 98, "t": "objectiu 98 %"}])).mark_text(
         align="right", dy=-7, fontSize=10.5, color=US).encode(x="tc:T", y="v:Q", text="t:N")
-    k = alt.Chart(pd.DataFrame([{"tc": df["tc"].iloc[0], "v": 8, "t": "blau: team_37 · gris: mediana del top-6"}])).mark_text(
-        align="left", fontSize=10.5, color=MUTED).encode(x="tc:T", y="v:Q", text="t:N")
-    return _cfg(alt.layer(top, us, goal, g, k).properties(width=width, height=height))
+    started = df.index[df["us"] >= 50]          # skip the start-up hour: the outage is the worst window after it
+    after = df.loc[started[0]:] if len(started) else df
+    worst = after.loc[after["us"].idxmin()]
+    lab = pd.DataFrame([{"tc": worst["tc"], "v": worst["us"],
+                         "t": f"writer caigut {datetime.fromtimestamp(worst['tc'] / 1000 - 3600, tz=CET).strftime('%H:%M')}"}])
+    note = alt.Chart(lab).mark_text(align="left", dx=8, dy=4, fontSize=11, fontWeight=700, color=LOST).encode(x="tc:T", y="v:Q", text="t:N")
+    dot = alt.Chart(lab).mark_point(size=60, color=LOST, filled=True).encode(x="tc:T", y="v:Q")
+    ends = pd.DataFrame([{"tc": df["tc"].iloc[-1], "v": 22, "t": "team_37", "c": US}, {"tc": df["tc"].iloc[-1], "v": 12, "t": "mediana top-6", "c": GREY}])
+    endl = alt.Chart(ends).mark_text(align="right", fontSize=11, fontWeight=700).encode(
+        x="tc:T", y="v:Q", text="t:N", color=alt.Color("c:N", scale=None))
+    return _cfg(alt.layer(top, us, goal, g, dot, note, endl).properties(width=width, height=height))
 
 
 VERSIONS = ["fz-v10-nocorr", "fz-v9a-xcat1.0", "t37-cf-rot", "t37-lgbm-recent", "t37-ev-v2-nocovis"]
@@ -133,7 +145,7 @@ def _box_layers(df, y, x, color, size=18):
     return box, strip
 
 
-def final_reliability(N, width="container", height=200):
+def final_reliability(N, width="container", height=230):
     """On-time per 10-minute window: every practice window vs every final window (Tukey box + strip)."""
     rows = [{"who": "Pràctica (ds 13:00 – dg 10:00)", "v": v, "final": False} for v in N["prac_w"]]
     rows += [{"who": "Final (dg 10:00 – 12:00)", "v": r["on_time"], "final": True, "lab": r["label"]} for r in N["windows"]]
@@ -143,11 +155,21 @@ def final_reliability(N, width="container", height=200):
     x = alt.X("v:Q", title="Respostes a temps per finestra de 10 min (%)", scale=alt.Scale(domain=[0, 100]),
               axis=alt.Axis(values=[0, 25, 50, 75, 95, 100]))
     color = alt.Color("final:N", scale=alt.Scale(domain=[True, False], range=[US, GREY]), legend=None)
-    box, strip = _box_layers(df, y, x, color)
+    box = alt.Chart(df[~df["final"]]).mark_boxplot(extent=1.5, size=26, median={"color": "#ffffff"}, outliers=False,
+                                                   color=GREY, opacity=0.55).encode(y=y, x=x)
+    dots = alt.Chart(df).mark_circle(opacity=0.6).encode(
+        y=y, x=x, color=color, size=alt.condition("datum.final", alt.value(70), alt.value(26)),
+        yOffset=alt.YOffset("jit:Q", scale=alt.Scale(domain=[-1.6, 1.6])),
+        tooltip=[alt.Tooltip("v:Q", title="% a temps", format=".1f")]).transform_calculate(jit="random() * 1.6 - 0.8")
     goal = alt.Chart(pd.DataFrame([{"v": 98}])).mark_rule(color=US, strokeDash=[5, 4], opacity=0.7).encode(x="v:Q")
     gt = alt.Chart(pd.DataFrame([{"v": 98, "t": "objectiu 98 %"}])).mark_text(align="right", dx=-4, y=6, fontSize=10.5,
                                                                               color=US).encode(x="v:Q", text="t:N")
-    return _cfg(alt.layer(strip, box, goal, gt).properties(width=width, height=height))
+    notes = pd.DataFrame([
+        {"who": "Pràctica (ds 13:00 – dg 10:00)", "v": 2, "t": f"{N['prac_below95']:.0f} % de finestres per sota del 95 %".replace(".", ","), "c": LOST},
+        {"who": "Final (dg 10:00 – 12:00)", "v": 2, "t": f"{N['n_windows'] - N['final_below98']} de {N['n_windows']} finestres ≥ 98 %", "c": US}])
+    nt = alt.Chart(notes).mark_text(align="left", dy=-34, fontSize=11.5, fontWeight=700).encode(
+        y=y, x="v:Q", text="t:N", color=alt.Color("c:N", scale=None))
+    return _cfg(alt.layer(box, dots, goal, gt, nt).properties(width=width, height=height))
 
 
 def final_latency(D, width="container", height=200):
