@@ -318,6 +318,14 @@ def main() -> None:
             "price_changes_hourly": load_db(period, "price_changes_hourly"),
         }
     data["history_slots"] = history_slots()
+    # official final aggregate (API mode "final": one window = the whole final, every team)
+    fin = RAW / "api" / "state_final.json"
+    if fin.exists():
+        d = json.loads(fin.read_text())
+        data["final_official"] = {"window": d.get("window"), "teams": d.get("teams", []), "baseline": d.get("baseline"),
+                                  "reference": d.get("reference"), "updated_at": d.get("updated_at"),
+                                  "progress": {k: [x for x in v if FINAL_START <= x[0] < FINAL_END]
+                                               for k, v in d.get("progress", {}).items()}}
     for p in sorted(MANUAL.glob("*.json")) if MANUAL.exists() else []:
         data.setdefault("manual", {})[p.stem] = json.loads(p.read_text(encoding="utf-8"))
     (ROOT / "data" / "dashboard_data.json").write_text(json.dumps(data, default=str))

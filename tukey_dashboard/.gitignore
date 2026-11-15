@@ -6,3 +6,5 @@ __pycache__/
 *.log
 docs/inv_queries/qlog.jsonl
 docs/inv_queries/out/
+
+state_live.json

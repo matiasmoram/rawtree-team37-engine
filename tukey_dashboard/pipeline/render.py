@@ -80,7 +80,13 @@ def poisson_cdf(k: int, lam: float) -> float:
 
 
 def garwood(k: int, alpha: float = 0.05):
-    """Exact Poisson 95 % interval for a count k (bisection on the Poisson CDF)."""
+    """Exact Poisson 95 % interval for a count k (bisection on the Poisson CDF). For k >= 100 exp(-lambda) underflows,
+    so the Wilson-Hilferty cube-root approximation is used (error < 0.1 % at that size)."""
+    if k >= 100:
+        z = 1.959964
+        lo = k * (1 - 1 / (9 * k) - z / (3 * math.sqrt(k))) ** 3
+        hi = (k + 1) * (1 - 1 / (9 * (k + 1)) + z / (3 * math.sqrt(k + 1))) ** 3
+        return lo, hi
     def solve(target, kk, lo, hi):
         for _ in range(80):
             mid = (lo + hi) / 2
@@ -108,7 +114,8 @@ def safe_median(v):
 
 
 # ----------------------------------------------------------------------------- period builder
-def build_period(D: dict, period: str, sizes: dict | None = None) -> dict | None:
+def build_period(D: dict, period: str, sizes: dict | None = None, with_specs: bool = True) -> dict | None:
+    """Every number of one period (N) and, unless with_specs=False (Shiny app), the five Vega-Lite specs."""
     N: dict = {"period": period}
     oracle = {r["t"]: r["oracle"] for r in D["oracle_hourly"]}
     o_med = st.median(oracle.values())
@@ -505,6 +512,10 @@ def build_period(D: dict, period: str, sizes: dict | None = None) -> dict | None
         top = max(rows, key=lambda r: int(r["requests"]))
         N["status_version"], N["status_version_share"] = top["model_version"], 100 * int(top["requests"]) / tot if tot else None
 
+    assert abs(N["per_pp"] * 100 - (0.5 * q_live + 10)) < 1e-9
+    N["d1_lo"] = min(N["d1_lo"], N["d1_hi"])
+    if not with_specs:   # building the specs is ~95 % of the cost; the Shiny app draws its own charts
+        return {"N": N, "specs": {}}
     sz = sizes or {}
     specs = {
         "v1": views.v1_field(field_rows, path_rows, sel, [20, 40, 60, 80], ref_q, proj, y_min=N["y_min"], **sz.get("v1", {})).to_dict(),
@@ -515,13 +526,63 @@ def build_period(D: dict, period: str, sizes: dict | None = None) -> dict | None
         "v4": views.v4_relations(cells, rel_order, labels, **sz.get("v4", {})).to_dict() if cells else None,
         "v5": views.v5_power(curve, gaps, n_final, **sz.get("v5", {})).to_dict(),
     }
-    assert abs(N["per_pp"] * 100 - (0.5 * q_live + 10)) < 1e-9
-    N["d1_lo"] = min(N["d1_lo"], N["d1_hi"])
     return {"N": N, "specs": specs}
 
 
 # ----------------------------------------------------------------------------- final from the DB only
-def build_final_db(D: dict, P: dict, sizes: dict | None = None) -> dict | None:
+def real_rate(k: int, n: int):
+    """Realised purchases per 100 requests with an exact Poisson 95 % interval."""
+    if not n:
+        return None
+    lo, hi = garwood(int(k))
+    return {"k": int(k), "n": int(n), "rate": 100 * k / n, "lo": 100 * lo / n, "hi": 100 * hi / n}
+
+
+def realised_by_version(D: dict, period: str) -> dict:
+    agg = defaultdict(lambda: [0, 0])
+    for r in (D.get(period) or {}).get("model_hourly", []):
+        a = agg[r["model_version"]]
+        a[0] += int(r["purchases"])
+        a[1] += int(r["requests"])
+    return {v: real_rate(k, n) for v, (k, n) in agg.items()}
+
+
+def segment_rate(D: dict, period: str, dim: str, val: str, sb: str):
+    rows = [r for r in (D.get(period) or {}).get("segments", []) if r["dim"] == dim and r["val"] == val and r["sb"] == sb]
+    return real_rate(sum(int(r["purchases"]) for r in rows), sum(int(r["requests"]) for r in rows))
+
+
+def final_official(D: dict) -> dict:
+    """Official final numbers from the API aggregate: conversion, rank, cold ratio and q (score) of every team.
+    The API publishes the conversion component of the score per hour (progress); with on-time ~100 % the conversion score
+    equals q, and the final oracle is implied by o = b + 100·(c − b)/score."""
+    fo = D.get("final_official")
+    if not fo or not fo.get("teams"):
+        return {}
+    b, ref = fo["baseline"], fo["reference"]
+    score = {k: st.mean([x[1] for x in v]) for k, v in fo.get("progress", {}).items() if v}
+    teams = []
+    for t in fo["teams"]:
+        teams.append({"team": t["team_id"], "conv": t["conversion"], "on_time": t.get("on_time"),
+                      "cold": t.get("cold_conversion"), "revenue": t.get("revenue_per_request"),
+                      "version": t.get("model_version"), "score": score.get(t["team_id"])})
+    teams.sort(key=lambda r: -r["conv"])
+    for i, r in enumerate(teams):
+        r["rank"] = i + 1
+    me = next((r for r in teams if r["team"] == TEAM), None)
+    if not me:
+        return {}
+    o = b["conversion"] + 100 * (me["conv"] - b["conversion"]) / me["score"] if me.get("score") else None
+    q = (lambda c: 100 * (c - b["conversion"]) / (o - b["conversion"])) if o else (lambda c: None)
+    return {"has_api": True, "official": True, "sel_rank": me["rank"], "n_teams": len(teams), "sel_conv": me["conv"],
+            "official_on_time": me["on_time"], "official_score": me.get("score"), "o_final": o,
+            "live_med": q(me["conv"]), "live_cold_ratio": me["cold"] / b["cold_conversion"] if me["cold"] else None,
+            "ref_conv": ref["conversion"], "ref_q_final": q(ref["conversion"]), "base_conv": b["conversion"],
+            "ref_cold_ratio_final": ref["cold_conversion"] / b["cold_conversion"], "field_final": teams,
+            "top_conv": teams[0]["conv"], "top_team": teams[0]["team"]}
+
+
+def build_final_db(D: dict, P: dict, sizes: dict | None = None, with_specs: bool = True) -> dict | None:
     """Fallback when the public API does not (yet) publish the final windows: reliability, relations and version
     shares straight from RawTree (team_37.feedback / submissions). Model quality (D2, D5) stays 'pendent (API)'."""
     block = D.get("final") or {}
@@ -571,6 +632,43 @@ def build_final_db(D: dict, P: dict, sizes: dict | None = None) -> dict | None:
     tb, ti = sum(sb.values()), sum(share.values())
     N["slot1_share"] = 100 * sb[1] / tb if tb else None
     N["bb_all"] = 100 * share["bought_before"] / ti if ti else None
+    N["n_windows"] = len(rows)
+    N["windows"] = rows
+    N["t_first"], N["t_last"] = int(bk[0]["t"]), int(bk[-1]["t"]) + 600
+    t1 = (D.get("meta", {}).get("built_from", {}).get("final") or {}).get("t1_utc")
+    if t1:   # the last bucket is partial while the final runs: report the extraction time, not the bucket end
+        N["t_last"] = min(N["t_last"], int(datetime.strptime(t1, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()))
+    N["complete"] = N["t_last"] >= FINAL_END - 60
+    # realised purchases (noisy but available before the API publishes the official expected metric)
+    N["real"] = real_rate(sum(int(b["purchases"]) for b in bk), N["n_requests"])
+    N["real_prac"] = realised_by_version(D, "practice")
+    N["real_prac_live"] = N["real_prac"].get(N.get("live"))
+    N["real_prac_prev"] = N["real_prac"].get(PN.get("live")) if PN.get("live") != N.get("live") else None
+    N["prev_live"] = PN.get("live")
+    cold_f = real_rate(sum(int(b["cold_purchases"]) for b in bk), sum(int(b["cold_requests"]) for b in bk))
+    cold_b = segment_rate(D, "practice", "cold", "true", "fallback")   # the baseline list, served as fallback
+    N["cold_real"], N["cold_base_real"] = cold_f, cold_b
+    N["cold_ratio_real"] = cold_f["rate"] / cold_b["rate"] if cold_f and cold_b and cold_b["rate"] else None
+    lat = block.get("latency_hourly", [])
+    p95f = [row["q"][5] for row in lat if row.get("q")]
+    N["p95_final"] = max(p95f) / 1000 if p95f else None
+    N["over_3000"] = sum(int(row.get("over_3000") or 0) for row in lat)
+    N["p95_lo"], N["p95_hi"] = PN.get("p95_lo"), PN.get("p95_hi")
+    wr_ = block.get("writers_hourly", [])
+    N["multi_submission"] = sum(int(r["multi_submission"]) for r in wr_)
+    N["multi_version"] = sum(int(r["multi_version"]) for r in wr_)
+    N["missing"] = sum(int(b["missing"]) + int(b["invalid"]) for b in bk)
+    N["late_or_missing"] = N["n_requests"] - sum(int(b["served_team"]) for b in bk)
+    # practice reliability on the same 10-min grid, for the before/after comparison
+    pb = [b for b in (D.get("practice") or {}).get("buckets10m", []) if int(b["requests"]) >= 300]
+    N["prac_w"] = [100 * int(b["served_team"]) / int(b["requests"]) for b in pb]
+    N["prac_box"], N["final_box"] = views.tukey(N["prac_w"]), views.tukey([r["on_time"] for r in rows])
+    N["prac_served"] = 100 * sum(int(b["served_team"]) for b in pb) / sum(int(b["requests"]) for b in pb) if pb else None
+    N["prac_below95"] = 100 * sum(1 for v in N["prac_w"] if v < 95) / len(N["prac_w"]) if N["prac_w"] else None
+    N["final_below98"] = sum(1 for r in rows if r["on_time"] < 98)
+    N.update(final_official(D))
+    if not with_specs:
+        return {"N": N, "specs": {}}
     events = []
     specs = {"v2": views.v2_reliability(rows, events, box_rows, box_pts, [], **(sizes or {}).get("v2", {})).to_dict()}
     return {"N": N, "specs": specs}
@@ -657,18 +755,37 @@ def outcomes(pred: dict, F: dict | None, P: dict | None = None) -> dict:
             h = hinges.get(served)
             q = FN.get("live_med")
             if q is None or not h:
-                out[k] = ("~", f"decisió canviada a les 09:43: es va servir {served} (empat a la pràctica)")
+                rf, rp = FN.get("real"), FN.get("real_prac_live")
+                if rf and rp:
+                    inside = rp["lo"] <= rf["rate"] <= rp["hi"] or rf["lo"] <= rp["rate"] <= rf["hi"]
+                    out[k] = ("~", f"es va servir {served} (decisió de les 09:43; empat a la pràctica): {f(rf['rate'], 2)} "
+                                   f"compres reals/100 a la final (IC95 {f(rf['lo'], 2)}–{f(rf['hi'], 2)}) vs {f(rp['rate'], 2)} "
+                                   f"a la pràctica: {'compatible' if inside else 'diferent'}; q oficial pendent de l'API")
+                else:
+                    out[k] = ("~", f"decisió canviada a les 09:43: es va servir {served} (empat a la pràctica)")
             else:
                 inside = h[0] <= q <= h[1]
-                out[k] = ("~", f"es va servir {served} (decisió de les 09:43; empat a la pràctica): q {f(q, 0)} "
-                               f"{'dins' if inside else 'fora de'} les seves frontisses {f(h[0], 0)}–{f(h[1], 0)}")
+                ctx = ""
+                if FN.get("ref_q_final") is not None:
+                    ctx = (f"; la referència de l'organització també va baixar (q {f(FN['ref_q_final'], 0)}): la final "
+                           f"era més difícil, i quedem a {f(FN['sel_conv'] - FN['ref_conv'], 2, sign=True)} compres/100 de la referència")
+                out[k] = ("✗" if not inside else "✓", f"es va servir {served} (decisió de les 09:43; empat a la pràctica): q oficial "
+                               f"{f(q, 0)} {'dins' if inside else 'fora de'} les seves frontisses de pràctica {f(h[0], 0)}–{f(h[1], 0)}{ctx}")
+            continue
+        if v is None and k == "D5" and FN.get("cold_ratio_real") is not None:
+            r = FN["cold_ratio_real"]
+            out[k] = ("✓" if r >= it["value"] else "✗",
+                      f"×{f(r, 1)} amb compres reals ({f(FN['cold_real']['rate'], 2)} vs {f(FN['cold_base_real']['rate'], 2)} "
+                      f"per 100 de la llista baseline a la pràctica); mètrica oficial pendent de l'API")
             continue
         if v is None:
-            out[k] = ("…", "pendent")
+            out[k] = ("…", "pendent de l'API")
             continue
         ok = (it["value"][0] <= v <= it["value"][1]) if it["op"] == "between" else v >= it["value"]
         unit = {"w_min": " %", "live_share": " %"}.get(it["metric"], "")
-        out[k] = ("✓" if ok else "✗", f"{'×' if k == 'D5' else ''}{f(v, 1 if k != 'D2' else 0)}{unit}")
+        note = {"D1": (" a la pitjor finestra de 10 min" if FN.get("source") == "db" else " a la pitjor finestra de 15 min"),
+                "D6": f" de les respostes ({FN.get('live', '')})"}.get(k, "")
+        out[k] = ("✓" if ok else "✗", f"{'×' if k == 'D5' else ''}{f(v, 1 if k != 'D2' else 0)}{unit}{note}")
     return out
 
 

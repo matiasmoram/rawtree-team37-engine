@@ -119,3 +119,148 @@ def slot_one(D, width="container", height=230):
                  alt.Tooltip("imp:Q", title="Impressions", format=",.0f"), alt.Tooltip("buys:Q", title="Compres")])
     txt = alt.Chart(df).mark_text(align="left", dx=4, fontSize=11, color=INK).encode(y=y, x=x, text=alt.Text("rate:Q", format=".1f"))
     return _cfg(alt.layer(bars, txt).properties(width=width, height=height))
+
+
+# ------------------------------------------------------------------------------------------------ final (confirmatory)
+# Drawn from the RawTree DB (team_37.feedback) because the public API hides the leaderboard while the final runs.
+# Same colour rules: blue = the final (what we confirm), grey = practice (what we predicted from).
+
+def _box_layers(df, y, x, color, size=18):
+    """Tukey box (hinges, median, whiskers to the adjacent values within 1.5·H) + every observation as a strip."""
+    box = alt.Chart(df).mark_boxplot(extent=1.5, size=size, median={"color": "#ffffff"}, outliers=False, opacity=0.9).encode(
+        y=y, x=x, color=color)
+    strip = alt.Chart(df).mark_tick(thickness=1.2, size=size + 8, opacity=0.35).encode(y=y, x=x, color=color)
+    return box, strip
+
+
+def final_reliability(N, width="container", height=200):
+    """On-time per 10-minute window: every practice window vs every final window (Tukey box + strip)."""
+    rows = [{"who": "Pràctica (ds 13:00 – dg 10:00)", "v": v, "final": False} for v in N["prac_w"]]
+    rows += [{"who": "Final (dg 10:00 – 12:00)", "v": r["on_time"], "final": True, "lab": r["label"]} for r in N["windows"]]
+    df = pd.DataFrame(rows)
+    y = alt.Y("who:N", title=None, sort=["Final (dg 10:00 – 12:00)", "Pràctica (ds 13:00 – dg 10:00)"],
+              axis=alt.Axis(labelLimit=220, labelFontSize=11.5))
+    x = alt.X("v:Q", title="Respostes a temps per finestra de 10 min (%)", scale=alt.Scale(domain=[0, 100]),
+              axis=alt.Axis(values=[0, 25, 50, 75, 95, 100]))
+    color = alt.Color("final:N", scale=alt.Scale(domain=[True, False], range=[US, GREY]), legend=None)
+    box, strip = _box_layers(df, y, x, color)
+    goal = alt.Chart(pd.DataFrame([{"v": 98}])).mark_rule(color=US, strokeDash=[5, 4], opacity=0.7).encode(x="v:Q")
+    gt = alt.Chart(pd.DataFrame([{"v": 98, "t": "objectiu 98 %"}])).mark_text(align="right", dx=-4, y=6, fontSize=10.5,
+                                                                              color=US).encode(x="v:Q", text="t:N")
+    return _cfg(alt.layer(strip, box, goal, gt).properties(width=width, height=height))
+
+
+def final_latency(D, width="container", height=200):
+    """Latency of team-served answers per hour (5–25–50–75–95 percentiles): practice hours vs final hours."""
+    rows = []
+    for period, lab in (("practice", "Pràctica"), ("final", "Final")):
+        for r in (D.get(period) or {}).get("latency_hourly", []):
+            q = r.get("q") or []
+            if len(q) < 8 or int(r["n"]) < 300:
+                continue
+            rows.append({"who": lab, "t": int(r["t"]), "p5": q[1] / 1000, "p25": q[2] / 1000, "p50": q[3] / 1000,
+                         "p75": q[4] / 1000, "p95": q[5] / 1000, "final": period == "final", "n": int(r["n"]),
+                         "hora": datetime.fromtimestamp(int(r["t"]), tz=CET).strftime("%a %H:%M").replace("Sat", "ds").replace("Sun", "dg")})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return None
+    y = alt.Y("p95:Q", title="Latència p95 per hora (s)", scale=alt.Scale(domain=[0, max(3.2, float(df["p95"].max()) + 0.2)]))
+    x = alt.X("who:N", title=None, sort=["Pràctica", "Final"], axis=alt.Axis(labelAngle=0, labelFontSize=11.5))
+    color = alt.Color("final:N", scale=alt.Scale(domain=[True, False], range=[US, GREY]), legend=None)
+    box = alt.Chart(df).mark_boxplot(extent="min-max", size=46, median={"color": "#ffffff"}).encode(x=x, y=y, color=color)
+    pts = alt.Chart(df).mark_circle(size=34, opacity=0.55).encode(
+        x=x, y=y, color=color, xOffset=alt.XOffset("jit:Q", scale=alt.Scale(domain=[-1, 1])),
+        tooltip=[alt.Tooltip("hora:N", title="Hora (CET)"), alt.Tooltip("p50:Q", title="p50 (s)", format=".2f"),
+                 alt.Tooltip("p95:Q", title="p95 (s)", format=".2f"), alt.Tooltip("n:Q", title="Respostes", format=",.0f")]
+    ).transform_calculate(jit="sin(datum.t) * 0.6")
+    lim = alt.Chart(pd.DataFrame([{"p95": 3.0, "t": "límit 3 s"}]))
+    rule = lim.mark_rule(color=LOST, strokeDash=[4, 3]).encode(y="p95:Q")
+    rt = lim.mark_text(align="left", x=4, dy=-6, fontSize=10.5, color=LOST).encode(y="p95:Q", text="t:N")
+    return _cfg(alt.layer(box, pts, rule, rt).properties(width=width, height=height))
+
+
+def final_realised(N, width="container", height=200):
+    """Realised purchases per 100 requests with exact Poisson 95 % intervals: the served version at the final vs practice."""
+    rows = []
+    live, prev = N.get("live"), N.get("prev_live")
+    for lab, r, fin in ((f"{live} · final", N.get("real"), True),
+                        (f"{live} · pràctica", N.get("real_prac_live"), False),
+                        (f"{prev} · pràctica", N.get("real_prac_prev"), False),
+                        ("llista baseline · pràctica", (N.get("real_prac") or {}).get("(fallback:missing)"), False)):
+        if r:
+            rows.append({"lab": lab, "rate": r["rate"], "lo": r["lo"], "hi": r["hi"], "n": r["n"], "k": r["k"], "final": fin})
+    df = pd.DataFrame(rows)
+    y = alt.Y("lab:N", title=None, sort=[r["lab"] for r in rows], axis=alt.Axis(labelLimit=220, labelFontSize=11.5))
+    x = alt.X("rate:Q", title="Compres reals per 100 peticions (IC95 exacte de Poisson)", scale=alt.Scale(domainMin=0))
+    color = alt.Color("final:N", scale=alt.Scale(domain=[True, False], range=[US, GREY]), legend=None)
+    tip = [alt.Tooltip("lab:N", title=""), alt.Tooltip("rate:Q", title="Compres/100", format=".2f"),
+           alt.Tooltip("lo:Q", title="IC95 inf.", format=".2f"), alt.Tooltip("hi:Q", title="IC95 sup.", format=".2f"),
+           alt.Tooltip("k:Q", title="Compres"), alt.Tooltip("n:Q", title="Peticions", format=",.0f")]
+    band = alt.Chart(df[~df["final"]].head(1)).mark_rect(opacity=0.12, color=GREY).encode(x="lo:Q", x2="hi:Q")
+    err = alt.Chart(df).mark_rule(strokeWidth=2).encode(y=y, x="lo:Q", x2="hi:Q", color=color)
+    dot = alt.Chart(df).mark_point(size=110, filled=True).encode(y=y, x=x, color=color, tooltip=tip)
+    txt = alt.Chart(df).mark_text(align="left", dx=8, dy=-9, fontSize=11, color=INK).encode(y=y, x="hi:Q", text=alt.Text("rate:Q", format=".2f"))
+    return _cfg(alt.layer(band, err, dot, txt).properties(width=width, height=height))
+
+
+def final_slot_one(D, width="container", height=230):
+    """Slot-1 purchases per 1,000 impressions by relation: practice pattern (grey) replicated at the final (blue, IC95)."""
+    import math
+
+    def agg(period):
+        out = {}
+        for r in (D.get(period) or {}).get("relation_slot", []):
+            if r["sb"] == "team" and r["slot"] == 1:
+                a = out.setdefault(r["relation"], [0, 0])
+                a[0] += r["impressions"]
+                a[1] += r["purchases"]
+        return out
+
+    pr, fi = agg("practice"), agg("final")
+    rows = []
+    for k, (imp, buys) in fi.items():
+        if imp < 200 or k not in pr:
+            continue
+        z = 1.959964
+        lo = 0.0 if buys == 0 else buys * (1 - 1 / (9 * buys) - z / (3 * math.sqrt(buys))) ** 3
+        hi = (buys + 1) * (1 - 1 / (9 * (buys + 1)) + z / (3 * math.sqrt(buys + 1))) ** 3
+        rows.append({"rel": REL_LABEL[k], "final": 1000 * buys / imp, "lo": 1000 * max(lo, 0) / imp, "hi": 1000 * hi / imp,
+                     "prac": 1000 * pr[k][1] / pr[k][0], "imp": imp, "buys": buys, "lost": k == "bought_before"})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return None
+    order = df.sort_values("prac", ascending=False)["rel"].tolist()
+    y = alt.Y("rel:N", sort=order, title=None, axis=alt.Axis(labelLimit=170, labelFontSize=11.5))
+    x = alt.X("final:Q", title="Compres per 1.000 vegades al slot 1", scale=alt.Scale(domainMin=0))
+    err = alt.Chart(df).mark_rule(color=US, strokeWidth=2, opacity=0.6).encode(y=y, x="lo:Q", x2="hi:Q")
+    prac = alt.Chart(df).mark_tick(color=REF, thickness=2.5, size=18).encode(
+        y=y, x="prac:Q", tooltip=[alt.Tooltip("rel:N", title="Relació"), alt.Tooltip("prac:Q", title="Pràctica /1.000", format=".1f")])
+    fin = alt.Chart(df).mark_point(size=100, filled=True).encode(
+        y=y, x=x, color=alt.condition("datum.lost", alt.value(LOST), alt.value(US)),
+        tooltip=[alt.Tooltip("rel:N", title="Relació"), alt.Tooltip("final:Q", title="Final /1.000", format=".1f"),
+                 alt.Tooltip("lo:Q", title="IC95 inf.", format=".1f"), alt.Tooltip("hi:Q", title="IC95 sup.", format=".1f"),
+                 alt.Tooltip("prac:Q", title="Pràctica /1.000", format=".1f"), alt.Tooltip("imp:Q", title="Impressions", format=",.0f"),
+                 alt.Tooltip("buys:Q", title="Compres")])
+    return _cfg(alt.layer(err, prac, fin).properties(width=width, height=height))
+
+
+def final_field(N, width="container", height=230):
+    """Official final, every team: on-time (x) vs expected purchases per 100 (y); team_37 in blue, references in black."""
+    rows = [r for r in N.get("field_final", []) if r.get("on_time") is not None and r["on_time"] >= 50]
+    if not rows:
+        return None
+    df = pd.DataFrame([{**r, "us": r["team"] == TEAM} for r in rows])
+    x = alt.X("on_time:Q", title="Peticions respostes a temps a la final (%) · l'eix comença al 50 %", scale=alt.Scale(domain=[50, 100]))
+    y = alt.Y("conv:Q", title="Compres esperades per 100 (mètrica oficial)", scale=alt.Scale(domainMin=0))
+    tip = [alt.Tooltip("team:N", title="Equip"), alt.Tooltip("rank:Q", title="Posició (conversió)"),
+           alt.Tooltip("conv:Q", title="Compres/100", format=".2f"), alt.Tooltip("on_time:Q", title="On-time %", format=".1f"),
+           alt.Tooltip("cold:Q", title="Fred /100", format=".2f"), alt.Tooltip("version:N", title="Versió")]
+    others = alt.Chart(df[~df["us"]]).mark_circle(size=45, color=GREY, opacity=0.8).encode(x=x, y=y, tooltip=tip)
+    us = alt.Chart(df[df["us"]]).mark_point(size=150, filled=True, color=US).encode(x=x, y=y, tooltip=tip)
+    me = df[df["us"]].iloc[0]
+    lab = alt.Chart(pd.DataFrame([{"on_time": me["on_time"], "conv": me["conv"], "t": f"team_37 #{int(me['rank'])}"}])).mark_text(
+        align="right", dx=-10, dy=10, color=US, fontWeight=700, fontSize=11.5).encode(x="on_time:Q", y="conv:Q", text="t:N")
+    lines = pd.DataFrame([{"conv": N["ref_conv"], "t": "referència de l'organització"}, {"conv": N["base_conv"], "t": "baseline"}])
+    rule = alt.Chart(lines).mark_rule(color=REF, strokeDash=[4, 3]).encode(y="conv:Q")
+    rt = alt.Chart(lines).mark_text(align="left", x=4, dy=-6, color=REF, fontSize=10.5).encode(y="conv:Q", text="t:N")
+    return _cfg(alt.layer(rule, rt, others, us, lab).properties(width=width, height=height))

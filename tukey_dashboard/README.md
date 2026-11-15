@@ -13,6 +13,15 @@ python -m venv .venv
 .venv\Scripts\python.exe -m shiny run app\app.py --port 8000      # obrir http://127.0.0.1:8000
 ```
 
+macOS / Linux:
+
+```bash
+cd tukey_dashboard
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m shiny run app/app.py --port 8000              # obrir http://127.0.0.1:8000
+./run_all.sh                                                      # refrescar totes les dades
+```
+
 Les dades incloses permeten obrir el tauler sense credencials. Per refrescar la base de dades, poseu
 `RAWTREE_API_KEY` al fitxer `.env` de l'arrel del repositori (no es publica a Git).
 
@@ -22,9 +31,30 @@ registrada abans de la final i el resultat. Barra lateral: període (pràctica/f
 vistes) i què vigilar durant la final. Cada títol és la conclusió; el botó ⓘ explica com es llegeix i quina regla de
 l'assignatura aplica.
 
-- Refrescar dades: `run_all.ps1` (API + base de dades + taules). La app es recarrega sola quan canvia
-  `data/dashboard_data.json`. Després de les 12:00 omple el període **Final** i la columna de resultats.
+- Refrescar dades: `run_all.ps1` (Windows) o `run_all.sh` (macOS/Linux): API + base de dades + taules. La app es
+  recarrega sola quan canvia `data/dashboard_data.json`.
 - Exportació estàtica antiga (més detallada, sense servidor): `dist/index.html`.
+
+## Període Final (confirmatori)
+
+El selector **Final** canvia tota la vista a la comprovació de les prediccions congelades abans de la final
+(`data/manual/predictions.json`, 15/11 08:12, sha `b4c5f609`):
+
+| Vista final | Què mostra | Font |
+|---|---|---|
+| Veredicte + 4 indicadors | on-time de la final, compres reals amb IC95, prediccions confirmades, posició oficial | BD + API |
+| F1 Fiabilitat | caixa de Tukey + tira de l'on-time per finestra de 10 min: pràctica vs final | `team_37.feedback` |
+| F2 Latència | p95 per hora, pràctica vs final: la millora no ve de la velocitat sinó d'un sol writer estable | `team_37.feedback` |
+| F3 Model | compres reals/100 de la versió servida a la final vs la mateixa versió, l'anterior i la llista baseline a la pràctica (IC95 exacte de Poisson) | `team_37.feedback` + `submissions` |
+| F4 Què ven | compres per 1.000 al slot 1 per relació: patró de la pràctica (marca) replicat a la final (punt + IC95) | BD |
+| Disparadors | cadascun dels quatre disparadors pre-registrats: ha saltat o no | BD |
+| Registre | columna «Resultat a la final» amb ✓/✗ per predicció | BD + API |
+
+**Mentre dura la final l'API pública amaga la classificació** (mode `final_running`: només llums verd/vermell). Per això
+el període final es llegeix de la base de dades de RawTree, i D2 (q oficial) i D5 (conversió freda oficial) es contrasten
+primer amb compres reals (marcat al text) i amb la mètrica oficial quan l'API la publiqui: només cal tornar a executar
+`run_all`. `fetch_api.py` no sobreescriu mai un fitxer bo amb una resposta buida i torna a baixar les finestres que van
+quedar buides.
 
 ## Què respon (una vista per decisió)
 
