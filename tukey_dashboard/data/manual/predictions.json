@@ -1,0 +1,49 @@
+{
+ "registered_at_cet": "15/11 08:12",
+ "sha256": "b4c5f60978e5c78ce7dc7c99dbf3a69445b5f63e8d2d471cbf7e86521344a57e",
+ "items": {
+  "D1": {
+   "text": "on-time ≥ 98 % a cada finestra de 15 min de la final",
+   "metric": "w_min",
+   "op": ">=",
+   "value": 98.0
+  },
+  "D2": {
+   "text": "q de fz-v9a-xcat1.0 dins 56–64 (frontisses de pràctica)",
+   "metric": "live_med",
+   "op": "between",
+   "value": [
+    55.85,
+    63.59
+   ],
+   "version": "fz-v9a-xcat1.0"
+  },
+  "D3": {
+   "text": "slot 1 ≥ 35 % de les compres; ja comprat ≤ 1,5 % dels slots",
+   "metric": "slot1_share,bb_all",
+   "op": "custom",
+   "value": [
+    35.0,
+    1.5
+   ]
+  },
+  "D4": {
+   "text": "no mesurable a la final (no hi ha marca d'exploració a les dades)",
+   "metric": null,
+   "op": "none"
+  },
+  "D5": {
+   "text": "conversió freda ≥ ×2,0 la baseline freda",
+   "metric": "live_cold_ratio",
+   "op": ">=",
+   "value": 2.0
+  },
+  "D6": {
+   "text": "una sola versió serveix ≥ 95 % de les peticions respostes",
+   "metric": "live_share",
+   "op": ">=",
+   "value": 95.0
+  }
+ },
+ "note": "Written once before the final by pipeline/render.py; render refuses to run if this file changes."
+}

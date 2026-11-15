@@ -1,0 +1,21 @@
+{
+ "source": "Notion page 8 (decision log) and repo commits; times converted to UTC epoch",
+ "items": [
+  {
+   "t": 1794664200,
+   "label": "14:50 motor nou (ev-v1)"
+  },
+  {
+   "t": 1794667800,
+   "label": "15:50 vet a recompres"
+  },
+  {
+   "t": 1794698340,
+   "label": "00:19 entra fz-v9a"
+  },
+  {
+   "t": 1794732180,
+   "label": "09:43 final: fz-v10-nocorr"
+  }
+ ]
+}

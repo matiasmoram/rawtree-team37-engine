@@ -1,0 +1,62 @@
+/* One-view Shiny dashboard: sidebar = controls + verdict + what to watch; main = KPI row, then D1 evidence
+   (field + reliability), then model choice / power / decision ledger, then what sells. */
+:root { --us: #2a78d6; --lost: #d55e00; --ink: #161616; --ink2: #3b3b38; --muted: #6a6964; --line: rgba(11,11,11,.12);
+  --band: #e8e7e2; --expected: #3a3a3a; --surface: #fcfcfb; --bg: #f5f5f2; --ok: #006300; --ko: #b3261e; }
+body { font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--ink); font-size: 14px; }
+.bslib-page-title, .navbar-brand { font-weight: 700; letter-spacing: -.01em; }
+.tk-eyebrow { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.card { background: var(--surface); border: 1px solid var(--line); }
+.card-header { background: transparent; border-bottom: 0; padding-bottom: 0; }
+.tk-title { font-size: 14px; font-weight: 700; line-height: 1.3; }
+.tk-vid { font-size: 10.5px; font-weight: 700; color: var(--muted); margin-right: 6px; }
+.tk-badge { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .07em; padding: 0 5px; border-radius: 3px; margin-right: 6px; color: var(--ink2); vertical-align: 1px; }
+.b-exploratori { border: 1px dashed var(--ink2); }
+.b-pre-registrat { border: 1px solid var(--ink2); }
+.b-confirmatori { border: 2px solid var(--ink); }
+.tk-info { cursor: help; color: var(--us); font-weight: 700; margin-left: 4px; }
+.tk-chart { overflow-x: auto; }
+.tk-chart .vega-embed summary { display: none; }
+.bslib-value-box .value-box-title { font-size: 12px; font-weight: 600; }
+.bslib-value-box .value-box-value { font-size: 26px; font-weight: 700; }
+.bslib-value-box p { font-size: 12px; margin: 0; }
+.sidebar h6 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 4px; }
+.tk-verdict { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; font-size: 13px; line-height: 1.35; }
+.tk-did { display: inline-block; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--ink2); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
+.tk-watch { padding-left: 16px; margin: 0; font-size: 12.5px; display: grid; gap: 3px; }
+.tk-alarm { color: var(--lost); font-weight: 700; font-size: 12.5px; margin: 6px 0; }
+.tk-small { font-size: 11.5px; color: var(--muted); }
+.tk-h1 { font-size: 16px; font-weight: 700; line-height: 1.3; margin: 0 0 6px; }
+.ledger table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ledger th, .ledger td { text-align: left; vertical-align: top; padding: 5px 4px; border-top: 1px solid var(--line); }
+.ledger thead th { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-top: 0; vertical-align: bottom; }
+.ledger tbody th { font-weight: 600; width: 33%; }
+.ledger .badge { display: none; }
+.ledger .did { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: var(--ink2); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
+.track { position: relative; height: 12px; margin-top: 3px; border-bottom: 1px solid #c3c2b7; }
+.track .rng { position: absolute; top: 5px; height: 2px; background: var(--expected); }
+.track .dot { position: absolute; top: 2px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--expected); }
+.track .dot.hollow, .track .dot.open { background: var(--surface); border: 1.5px solid var(--expected); }
+.axis { position: relative; height: 12px; margin-top: 2px; }
+.axis span { position: absolute; transform: translateX(-50%); font-size: 9.5px; color: var(--muted); }
+.stake-lab { display: block; font-weight: 600; margin-top: 2px; font-size: 11px; }
+.tick-note { display: block; font-size: 10px; color: var(--muted); }
+.na { color: var(--muted); font-style: italic; }
+.outc { font-weight: 600; } .outc span { display: block; font-weight: 400; font-size: 10.5px; color: var(--ink2); }
+.outc.pend { color: var(--muted); font-weight: 400; font-style: italic; } .outc.ok { color: var(--ok); } .outc.ko { color: var(--ko); }
+
+.bslib-value-box { min-height: 0 !important; }
+.bslib-value-box .value-box-area { padding: 10px 14px !important; }
+.bslib-value-box .value-box-value { margin: 2px 0 !important; }
+.tk-h1 { margin-top: 2px; }
+.card-body { padding: 6px 10px; }
+.tk-top { margin: 2px 0 4px; }
+.tk-verdict3 { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; font-size: 13px; line-height: 1.4; color: var(--ink2); }
+.tk-verdict3 strong { color: var(--ink); }
+.tk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tk-table th, .tk-table td { text-align: left; vertical-align: top; padding: 6px 8px; border-top: 1px solid var(--line); }
+.tk-table thead th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-top: 0; }
+.tk-table tbody th { font-weight: 600; }
+.card-header .tk-title { font-size: 14px; }
+@media (max-width: 1100px) { .tk-verdict3 { grid-template-columns: minmax(0, 1fr); } }
+.tk-chart, .tk-chart .vega-embed { width: 100%; }
+.tk-chart { overflow: hidden; }

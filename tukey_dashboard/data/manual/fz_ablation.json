@@ -1,0 +1,10 @@
+{
+  "source": "fz_adaptive/README.md (live A/B on the official per-model leaderboard, Sat night)",
+  "rows": [
+    {"test": "Rank only the session's category", "variant": 1.38, "control": 2.09, "control_label": "whole catalogue"},
+    {"test": "x0.5 penalty on other categories", "variant": 1.84, "control": 2.09, "control_label": "no penalty"},
+    {"test": "x2.5 boost on other categories", "variant": 1.86, "control": 2.49, "control_label": "no boost"},
+    {"test": "Diversity cap (2 per subcategory)", "variant": 1.42, "control": 1.85, "control_label": "no cap"},
+    {"test": "Online correction on", "variant": 2.21, "control": 2.17, "control_label": "off"}
+  ]
+}

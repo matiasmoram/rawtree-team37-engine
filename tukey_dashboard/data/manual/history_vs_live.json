@@ -1,0 +1,8 @@
+{
+  "source": "Notion page 10 (Independent designs, learning checks) and page 8; DB recomputation in docs/data_inventory.md 4.5b",
+  "rows": [
+    {"signal": "Already-bought item converts (per shown item)", "history": 1.66, "live": 0.007, "unit": "%"},
+    {"signal": "Re-buys as share of purchases", "history": 65, "live": 0.2, "unit": "%"},
+    {"signal": "Popularity features AUC (upper)", "history": 0.82, "live": 0.68, "unit": "AUC"}
+  ]
+}

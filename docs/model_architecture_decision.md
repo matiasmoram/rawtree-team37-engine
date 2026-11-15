@@ -23,7 +23,7 @@ El objetivo de entrenamiento es `P(compra | request, producto)` para una exposic
 | Vecinos de contenido | Mantener como fuente de candidatos y prior de cold start | Ya hay integración de servicio; los productos añadidos tras el artefacto pueden quedar fuera. Añadir cobertura y corte temporal al siguiente ciclo. |
 | Co-visitas recientes | Aparcar | Hay artefactos y policy, pero la matriz no se refresca en el delta normal. El boost global anterior no ganó de forma estable. |
 | Skibidy/Thompson y exploración | Sacar de servicio por ahora | Atribución y propensión de la lista no son suficientemente fiables para aprender/evaluar esta exploración. Guardar el prototipo; no llamarlo OPE. |
-| `cf-rot` | Sacar del mix inicial | La muestra del leaderboard es pequeña y convive con emisores duplicados. La hipótesis de orden de vistas queda como challenger futuro, no como política adicional permanente. |
+| `cf-rot` | Mantener como challenger | La ventana móvil de 60 min lo mostró en 1,90 compras esperadas/100 (n≈490), cold 2,75; en 120–180 min quedó cerca de `lgbm-recent`. Mantenerlo para comparar en ventanas limpias. |
 | Auto-promoción y tuning continuo | No activar | Ventanas solapadas y escritores simultáneos invalidan las decisiones automáticas. Revisión humana tras una ventana cerrada. |
 
 ## Próximo modelo: `lgbm-cart-v2`
@@ -43,16 +43,16 @@ Entrenar click y compra como objetivos separados y comparar `P(click) × P(compr
 ## Validación y promoción
 
 1. Resolver el ownership del tráfico: un escritor del equipo o shards disjuntos verificados. Ahora hay demasiadas requests con submissions de varias versiones; las comparaciones por brazo no son causalmente interpretables.
-2. Mantener `lgbm-recent` como champion operativo y `cf-v1` como único comparator mientras se construye v2. El mix local queda `80/20`; se retiran `cf-rot` y `skibidy-v1` del default.
+2. Servir `cf-rot:100` durante la ventana actual, según la evidencia más reciente indicada abajo. No mezclar otros brazos mientras se recoge esta muestra. Skibidy y el resto salen del mix.
 3. Hacer un replay point-in-time sobre una ventana nueva para comprobar cobertura de candidatos, listas válidas, latencia, cold start y orden de compras observadas. Ese replay es diagnóstico, no estimación del score oculto.
 4. Exponer v2 como challenger pequeño, con una ventana fija, una sola asignación por usuario y mínimo preregistrado. Comparar conversión esperada RawTree, conversión cold y puntualidad en la misma ventana.
 5. Promover solo tras terminar la ventana y auditar solapamiento de emisores, atribución exacta y fiabilidad. Sin promocionar por inspección repetida de ventanas móviles.
 
 ## Estado observado al decidir
 
-El monitor de las 18:37 CET mostraba `lgbm-recent` 1,48 y `cf-rot` 1,56 compras esperadas por 100, pero con tamaños distintos (2.274 y 753) y ventanas móviles. El audit de 5 minutos encontró 56 % de requests con varios modelos; el de 15 minutos, 72 %. Esto impide afirmar que `cf-rot` sea mejor o que la asignación actual represente el tráfico que decide RawTree. Skibidy quedó claramente por debajo en la ventana larga, pero no basta para concluir sobre el modelo fuera de esa contaminación.
+El monitor de las 18:37 CET mostraba `lgbm-recent` 1,48 y `cf-rot` 1,56 compras esperadas por 100, con tamaños distintos. La ventana más reciente compartida por el equipo (18:12–18:42) reportó `t37-cf-rot` 1,9204 % sobre 479 requests, cold 2,7786 % y €0,864 por request; la ventana móvil de 60 min fue similar. En 120–180 minutos LGBM y `cf-rot` quedaron casi empatados. El audit previo encontró 56 % de requests con varios modelos en 5 min y 72 % en 15 min: la señal justifica servir solo `cf-rot` ahora, aunque la atribución sigue necesitando ownership único.
 
-El relevo local de las 18:42 falló en transporte: al pararlo a las 18:49 había 1.102 respuestas, 301 envíos, 107 fallos de push y 787 tardías, con timeouts de `api.rawtree.com`. El proceso local quedó detenido; `run_live.py` conserva 80/20 como mix de reanudación. No volver a exponer brazos hasta que se compruebe que el endpoint entrega envíos dentro del plazo.
+El relevo local de las 18:42 falló en transporte: al pararlo a las 18:49 había 1.102 respuestas, 301 envíos, 107 fallos de push y 787 tardías, con timeouts de `api.rawtree.com`. El proceso local quedó detenido; `run_live.py` conserva `cf-rot:100` para reanudar según la instrucción del equipo. El nuevo entrenamiento sigue offline y no compite por tráfico.
 
 ## No hacer todavía
 

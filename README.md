@@ -8,6 +8,7 @@ Work in progress. Layout:
 - `engine/eval/`: offline evaluators built on the challenge data.
 - `scripts/`: one-off utilities and probes.
 - `docs/`: research notes and design decisions.
+- [`tukey_dashboard/`](tukey_dashboard/README.md): interactive project views, static HTML exports, screenshots, and supporting data.
 
 Credentials live in `.env` (never committed): `TEAM_ID`, `RAWTREE_API_KEY`, `HELMCODE_API_KEY`.
 
