@@ -1,5 +1,11 @@
 .env
 .venv/
-data/
 __pycache__/
 *.log
+# rebuildable or private: raw history, training matrix, saved live state, live logs
+data/se_*.parquet
+data/train_*
+data/model_hist.pkl
+data/*.tmp
+data/state.pkl
+data/live_*

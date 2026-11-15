@@ -1,5 +1,5 @@
 #!/bin/bash
-# Keeps the recommender alive unattended: restarts serve.py / learn.py if they exit, and keeps the Mac awake.
+# Keeps the recommender alive unattended: restarts serve.py if it exits or hangs, and keeps the Mac awake.
 cd "$(dirname "$0")"
 caffeinate -imsu -w $$ &
 while true; do
