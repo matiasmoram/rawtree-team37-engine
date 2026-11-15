@@ -226,15 +226,13 @@ def server(input, output, session):
             res = result()
             h = (f"{(res + ' a la final').capitalize() if res else 'Final'}: {R.pct(f['served_total'], 3)} de respostes a temps "
                  f"i {ok} de {m} prediccions confirmades.")
-            sub = (f"Diumenge 10:00–12:00 · {R.f(f['n_requests'], 0)} peticions · una sola versió servida "
-                   f"({f.get('live')}) · prediccions registrades a les {pred()['registered_at_cet'][-5:]}, abans de començar")
+            sub = "Final del diumenge, de 10 a 12 h."
             tag = "CONFIRMATORI"
         else:
             n = N()
-            h = (f"La fiabilitat ens costava més que el model: amb el mateix model, "
-                 f"#{n['best_rank']} responent-ho tot i #{n['worst_rank']} amb el {R.pct(n['worst_s'], 0)} a temps.")
-            sub = (f"Pràctica, dissabte 13:00 – diumenge 10:00 · {R.f(n['n_requests'], 0)} peticions · d'aquí surten les "
-                   f"decisions i les prediccions per a la final")
+            h = (f"La fiabilitat ens costava més que el model: #{n['best_rank']} responent-ho tot, "
+                 f"#{n['worst_rank']} amb el {R.pct(n['worst_s'], 0)} a temps.")
+            sub = "Pràctica, de dissabte a la tarda a diumenge al matí."
             tag = "EXPLORATORI"
         return ui.div(ui.span(tag, class_=f"tk-tag t-{tag.lower()}"), ui.h2(h, class_="tk-h1"), ui.p(sub, class_="tk-lede"),
                       class_="tk-hero")
@@ -438,7 +436,7 @@ def server(input, output, session):
                        f'<td class="oc {cls}" title="{E(detail)}"><b>{g} {word}</b><span>{E(short)}</span></td></tr>')
         return ui.div(
             ui.div(ui.span("Decisions per a la final: punts en joc, predicció registrada i resultat", class_="tk-title"),
-                   ui.span(f"prediccions registrades {pred()['registered_at_cet']} · sha {pred()['sha256'][:8]}", class_="tk-sub inline"),
+                   ui.span(f"Prediccions fixades a les {pred()['registered_at_cet'][-5:]}, abans de la final.", class_="tk-sub inline"),
                    class_="tk-lhead"),
             ui.HTML('<table class="tk-ledger"><thead><tr><th></th><th>Decisió</th><th>Punts en joc (sobre 100)</th>'
                     f'<th>Predicció</th><th>A la final</th></tr></thead><tbody>{"".join(trs)}</tbody></table>'),
